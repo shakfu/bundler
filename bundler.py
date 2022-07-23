@@ -28,9 +28,6 @@ PATTERNS = [
 ]
 
 
-
-
-
 INFO_PLIST_TMPL = """\
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -69,8 +66,9 @@ INFO_PLIST_TMPL = """\
 """
 
 
-def make_bundle(target: Pathlike, version: str = "1.0",
-                prefix: str = "org.me", suffix: str = ".app"):
+def make_bundle(target: Pathlike, version: str = "1.0", 
+                add_to_resources: list[str] = None, prefix: str = "org.me", 
+                suffix: str = ".app"):
     """Makes a macos bundle.
 
     :param      target:   The target executable
@@ -83,24 +81,26 @@ def make_bundle(target: Pathlike, version: str = "1.0",
     :type       prefix:   str
     """
     target = Path(target)
-    base = target.parent / (target.stem + suffix)
-    contents = base / "Contents"
+    bundle = target.parent / (target.stem + suffix)
+    bundle_contents = bundle / "Contents"
 
-    info_plist = contents / "Info.plist"
-    pkg_info = contents / "PkgInfo"
+    bundle_info_plist = bundle_contents / "Info.plist"
+    bundle_pkg_info = bundle_contents / "PkgInfo"
 
-    macos = contents / "MacOS"
-    frameworks = contents / "Frameworks"
-    resources = contents / "Resources"
+    bundle_macos = bundle_contents / "MacOS"
+    bundle_frameworks = bundle_contents / "Frameworks"
+    bundle_resources = bundle_contents / "Resources"
 
-    executable = macos / target.name
+    bundle_subdirs = [bundle_macos, bundle_frameworks]
 
-    for subdir in [macos, frameworks, resources]:
+    bundle_executable = bundle_macos / target.name
+
+    for subdir in bundle_subdirs:
         subdir.mkdir(exist_ok=True, parents=True)
 
-    shutil.copy(target, executable)
+    shutil.copy(target, bundle_executable)
 
-    with open(info_plist, "w", encoding="utf-8") as fopen:
+    with open(bundle_info_plist, "w", encoding="utf-8") as fopen:
         fopen.write(
             INFO_PLIST_TMPL.format(
                 executable=target.name,
@@ -111,13 +111,19 @@ def make_bundle(target: Pathlike, version: str = "1.0",
             )
         )
 
-    with open(pkg_info, "w", encoding="utf-8") as fopen:
+    with open(bundle_pkg_info, "w", encoding="utf-8") as fopen:
         fopen.write("APPL????")
 
-    oldmode = os.stat(executable).st_mode
-    os.chmod(executable, oldmode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    oldmode = os.stat(bundle_executable).st_mode
+    os.chmod(bundle_executable, oldmode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
-    macho_standalone.standaloneApp(base)
+    if add_to_resources:
+        bundle_resources.mkdir(exist_ok=True, parents=True)
+        for resource in add_to_resources:
+            resource = Path(resource)
+            shutil.copytree(resource, bundle_resources / resource.name)
+
+    macho_standalone.standaloneApp(bundle)
 
 
 def get_dependencies(target: str, names: dict[str, Set] = None, deps: list[str] = None):
@@ -144,5 +150,4 @@ def get_dependencies(target: str, names: dict[str, Set] = None, deps: list[str] 
 
 
 if __name__ == "__main__":
-    make_bundle("test_guile")
-    # tree, dependencies = get_dependencies('libguile-3.0.1.dylib')
+    tree, dependencies = get_dependencies('libguile-3.0.1.dylib')
