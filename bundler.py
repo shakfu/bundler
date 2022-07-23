@@ -66,9 +66,28 @@ INFO_PLIST_TMPL = """\
 """
 
 
-def make_bundle(target: Pathlike, version: str = "1.0", 
-                add_to_resources: list[str] = None, prefix: str = "org.me", 
-                suffix: str = ".app"):
+
+class BundleFolder:
+    def __init__(self, path: Pathlike):
+        self.path = Path(path)
+
+    def create(self):
+        """create bundle folder"""
+        if not self.path.exists():
+            self.path.mkdir(exist_ok=True, parents=True)
+        assert self.path.is_dir(), f"{path} is not a directory"
+
+    def copy(self, src: Pathlike):
+        """recursive copy from src to bundle folder"""
+        src = Path(src)
+        shutil.copytree(src, self.path / src.name)
+
+
+
+
+
+
+class Bundle:
     """Makes a macos bundle.
 
     :param      target:   The target executable
@@ -80,6 +99,70 @@ def make_bundle(target: Pathlike, version: str = "1.0",
     :param      prefix:   The suffix of the bundle; defaults to '.app'
     :type       prefix:   str
     """
+    def __init__(self, target: Pathlike, version: str = "1.0", 
+                add_to_resources: list[str] = None, base_id: str = "org.me", 
+                extension: str = ".app"):
+
+        self.target = Path(target)
+        self.version = version
+        self.add_to_resources = add_to_resources
+        self.base_id = base_id
+        self.extension = extension
+        # folders
+        self.bundle = self.target.parent / (self.target.stem + extension)
+        self.contents = self.bundle / "Contents"
+        self.macos = self.contents / "MacOS"
+        # special bundle folders
+        self.frameworks = BundleFolder(self.contents / "Frameworks")
+        self.resources = BundleFolder(self.contents / "Resources")
+        # files
+        self.info_plist = self.contents / "Info.plist"
+        self.pkg_info = self.contents / "PkgInfo"
+        self.executable = self.macos / target.name
+
+    def create_executable(self):
+        """create bundle executable"""
+        shutil.copy(self.target, self.executable)
+        oldmode = os.stat(self.executable).st_mode
+        os.chmod(self.executable, oldmode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+    def create_info_plist(self):
+        """create info.plist file"""
+        with open(self.info_plist, "w", encoding="utf-8") as fopen:
+            fopen.write(
+                INFO_PLIST_TMPL.format(
+                    executable=self.target.name,
+                    bundle_name=self.target.stem,
+                    bundle_identifier=f"{self.base_id}.{target.stem}",
+                    bundle_version=self.version,
+                    versioned_bundle_name=f"{self.target.stem} {self.version}",
+                )
+            )
+
+    def create_pkg_info(self):
+        """create pkg_info file"""
+        with open(self.pkg_info, "w", encoding="utf-8") as fopen:
+            fopen.write("APPL????")
+
+    def create(self):
+        """create the bundle"""
+
+        self.create_executable()
+        self.create_info_plist()
+        self.create_pkg_info()
+
+        if self.add_to_resources:
+            self.resources.create()
+            for resource in add_to_resources:
+                self.resources.copy(resource)
+
+        self.frameworks.create()
+        macho_standalone.standaloneApp(bundle)
+
+
+def make_bundle(target: Pathlike, version: str = "1.0", 
+                add_to_resources: list[str] = None, prefix: str = "org.me", 
+                suffix: str = ".app"):
     target = Path(target)
     bundle = target.parent / (target.stem + suffix)
     bundle_contents = bundle / "Contents"
@@ -149,5 +232,5 @@ def get_dependencies(target: str, names: dict[str, Set] = None, deps: list[str] 
 
 
 
-if __name__ == "__main__":
-    tree, dependencies = get_dependencies('libguile-3.0.1.dylib')
+if __name__ == "__main__": pass
+    # tree, dependencies = get_dependencies('libguile-3.0.1.dylib')
