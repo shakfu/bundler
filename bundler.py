@@ -118,7 +118,7 @@ class Bundle:
         # files
         self.info_plist = self.contents / "Info.plist"
         self.pkg_info = self.contents / "PkgInfo"
-        self.executable = self.macos / target.name
+        self.executable = self.macos / self.target.name
 
     def create_executable(self):
         """create bundle executable"""
@@ -133,7 +133,7 @@ class Bundle:
                 INFO_PLIST_TMPL.format(
                     executable=self.target.name,
                     bundle_name=self.target.stem,
-                    bundle_identifier=f"{self.base_id}.{target.stem}",
+                    bundle_identifier=f"{self.base_id}.{self.target.stem}",
                     bundle_version=self.version,
                     versioned_bundle_name=f"{self.target.stem} {self.version}",
                 )
@@ -144,20 +144,29 @@ class Bundle:
         with open(self.pkg_info, "w", encoding="utf-8") as fopen:
             fopen.write("APPL????")
 
+    def create_resources(self):
+        """create and populate  bundle `Resources` folder"""
+        if self.add_to_resources:
+            self.resources.create()
+            for resource in self.add_to_resources:
+                self.resources.copy(resource)
+
+    def create_frameworks(self):
+        """create and populate  bundle `Frameworks` folder"""
+        self.frameworks.create()
+        macho_standalone.standaloneApp(self.bundle)
+
     def create(self):
         """create the bundle"""
 
+        self.macos.mkdir(exist_ok=True, parents=True)
         self.create_executable()
         self.create_info_plist()
         self.create_pkg_info()
+        self.create_resources()
+        self.create_frameworks()
 
-        if self.add_to_resources:
-            self.resources.create()
-            for resource in add_to_resources:
-                self.resources.copy(resource)
 
-        self.frameworks.create()
-        macho_standalone.standaloneApp(bundle)
 
 
 def make_bundle(target: Pathlike, version: str = "1.0", 

@@ -12,4 +12,7 @@ load_paths_scm = subprocess.check_output(
 load_paths = load_paths_scm[1:-1].split()
 guile_path = commonpath(load_paths)
 
-bundler.make_bundle("test_guile", add_to_resources=[guile_path])
+#bundler.make_bundle("test_guile", add_to_resources=[guile_path])
+bundle = bundler.Bundle("test_guile", add_to_resources=[guile_path])
+bundle.create()
+
