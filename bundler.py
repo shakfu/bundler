@@ -218,6 +218,39 @@ def make_bundle(target: Pathlike, version: str = "1.0",
     macho_standalone.standaloneApp(bundle)
 
 
+class DependencyTree:
+    PATTERNS = [
+        "/opt/local/",
+        "/usr/local/",
+        "/Users/",
+        "/tmp/",
+    ]
+
+    def __init__(self, target: str):
+        self.target = target
+        self.install_names = {}
+        self.dependencies = []
+
+    def get_dependencies(self, target: str = None):
+        """get dependencies in tree structure and as a list of paths"""
+        if not target:
+            target = self.target
+        key = os.path.basename(target)
+        self.install_names[key] = set()
+        result = subprocess.check_output(["otool", "-L", target], text=True)
+        entries = [line.strip() for line in result.splitlines()]
+        for entry in entries:
+            match = re.match(r"\s*(\S+)\s*\(compatibility version .+\)$", entry)
+            if match:
+                path = match.group(1)
+                dep_path, dep_filename = os.path.split(path)
+                if any(dep_path.startswith(p) for p in PATTERNS) or dep_path == "":
+                    item = (path, "@rpath/" + dep_filename)
+                    self.install_names[key].add(item)
+                    if path not in self.dependencies:
+                        self.dependencies.append(path)
+                        self.get_dependencies(path)
+
 def get_dependencies(target: str, names: dict[str, Set] = None, deps: list[str] = None):
     """get dependencies in tree structure and as a list of paths"""
     key = os.path.basename(target)
@@ -241,5 +274,8 @@ def get_dependencies(target: str, names: dict[str, Set] = None, deps: list[str] 
 
 
 
-if __name__ == "__main__": pass
+if __name__ == "__main__":
     # tree, dependencies = get_dependencies('libguile-3.0.1.dylib')
+    # tree = DependencyTree()
+    # tree.get_dependencies('libguile-3.0.1.dylib')
+    tree = DependencyTree('libguile-3.0.1.dylib')
