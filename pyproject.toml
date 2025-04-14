@@ -1,0 +1,14 @@
+[project]
+name = "bundler"
+version = "0.1.0"
+description = "Python tools to create macOS bundles."
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "macholib>=1.16.3",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.5",
+]

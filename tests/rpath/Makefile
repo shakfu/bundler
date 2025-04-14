@@ -5,7 +5,7 @@ all: test
 
 dylib:
 	@echo "the install_name section here is key"
-	@clang -dynamiclib -std=gnu99 ratings.c \
+	@$(CC) -dynamiclib -std=gnu99 ratings.c \
 		-current_version 1.0 \
 		-compatibility_version 1.0 \
 		-fvisibility=hidden \
@@ -14,19 +14,19 @@ dylib:
 
 dependent:
 	@echo "location of dylib is specified as in the libs directory."
-	@clang dependent.c -L. -lRatings.A -Wl,-rpath,@executable_path/libs -o dependent
+	@$(CC) dependent.c -L. -lRatings.A -Wl,-rpath,@executable_path/libs -o dependent
 
 demo:
-	@clang -dynamiclib -std=gnu99 ratings.c \
+	@$(CC) -dynamiclib -std=gnu99 ratings.c \
 		-current_version 1.0 \
 		-compatibility_version 1.0 \
 		-fvisibility=hidden \
 		-o libRatings.A.dylib
-	@clang dependent.c -L. -lRatings.A -o demo
+	@$(CC) dependent.c -L. -lRatings.A -o demo
 	@python3 test_app.py
 
 runtime:
-	@clang -o runtime runtime.c
+	@$(CC) -o runtime runtime.c
 
 
 test: dylib dependent
