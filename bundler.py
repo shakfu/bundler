@@ -7,6 +7,7 @@ Provides functional tools to make an .app bundle
 - get_deps() recursively returns dependencies
 
 """
+
 import os
 import re
 import shutil
@@ -66,7 +67,6 @@ INFO_PLIST_TMPL = """\
 """
 
 
-
 class BundleFolder:
     def __init__(self, path: Pathlike):
         self.path = Path(path)
@@ -75,16 +75,12 @@ class BundleFolder:
         """create bundle folder"""
         if not self.path.exists():
             self.path.mkdir(exist_ok=True, parents=True)
-        assert self.path.is_dir(), f"{path} is not a directory"
+        assert self.path.is_dir(), f"{self.path} is not a directory"
 
     def copy(self, src: Pathlike):
         """recursive copy from src to bundle folder"""
         src = Path(src)
         shutil.copytree(src, self.path / src.name)
-
-
-
-
 
 
 class Bundle:
@@ -99,10 +95,15 @@ class Bundle:
     :param      prefix:   The suffix of the bundle; defaults to '.app'
     :type       prefix:   str
     """
-    def __init__(self, target: Pathlike, version: str = "1.0", 
-                add_to_resources: list[str] = None, base_id: str = "org.me", 
-                extension: str = ".app"):
 
+    def __init__(
+        self,
+        target: Pathlike,
+        version: str = "1.0",
+        add_to_resources: list[str] = None,
+        base_id: str = "org.me",
+        extension: str = ".app",
+    ):
         self.target = Path(target)
         self.version = version
         self.add_to_resources = add_to_resources
@@ -167,11 +168,13 @@ class Bundle:
         self.create_frameworks()
 
 
-
-
-def make_bundle(target: Pathlike, version: str = "1.0", 
-                add_to_resources: list[str] = None, prefix: str = "org.me", 
-                suffix: str = ".app"):
+def make_bundle(
+    target: Pathlike,
+    version: str = "1.0",
+    add_to_resources: list[str] = None,
+    prefix: str = "org.me",
+    suffix: str = ".app",
+):
     target = Path(target)
     bundle = target.parent / (target.stem + suffix)
     bundle_contents = bundle / "Contents"
@@ -251,6 +254,7 @@ class DependencyTree:
                         self.dependencies.append(path)
                         self.get_dependencies(path)
 
+
 def get_dependencies(target: str, names: dict[str, Set] = None, deps: list[str] = None):
     """get dependencies in tree structure and as a list of paths"""
     key = os.path.basename(target)
@@ -273,9 +277,8 @@ def get_dependencies(target: str, names: dict[str, Set] = None, deps: list[str] 
     return _names, _deps
 
 
-
 if __name__ == "__main__":
     # tree, dependencies = get_dependencies('libguile-3.0.1.dylib')
     # tree = DependencyTree()
     # tree.get_dependencies('libguile-3.0.1.dylib')
-    tree = DependencyTree('libguile-3.0.1.dylib')
+    tree = DependencyTree("libguile-3.0.1.dylib")
