@@ -49,7 +49,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-
 # ----------------------------------------------------------------------------
 # Constants
 
@@ -174,7 +173,7 @@ class CustomFormatter(logging.Formatter):
         else:
             log_fmt = self.FORMATS[record.levelno]
         duration = datetime.datetime.fromtimestamp(
-            record.relativeCreated / 1000, datetime.UTC
+            record.relativeCreated / 1000, datetime.timezone.utc
         )
         record.delta = duration.strftime("%H:%M:%S")
         formatter = logging.Formatter(log_fmt)
