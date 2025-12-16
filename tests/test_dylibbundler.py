@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from bundler import (
+from macbundler import (
     CommandError,
     ConfigurationError,
     Dependency,

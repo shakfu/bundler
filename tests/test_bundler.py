@@ -6,8 +6,8 @@ from unittest.mock import patch
 
 import pytest
 
-import bundler
-from bundler import (
+import macbundler
+from macbundler import (
     INFO_PLIST_TMPL,
     Bundle,
     BundleFolder,
@@ -170,9 +170,9 @@ class TestBundle:
 
         assert not bundle.resources.path.exists()
 
-    @patch.object(bundler.DylibBundler, 'collect_dependencies')
-    @patch.object(bundler.DylibBundler, 'collect_sub_dependencies')
-    @patch.object(bundler.DylibBundler, 'process_collected_deps')
+    @patch.object(macbundler.DylibBundler, 'collect_dependencies')
+    @patch.object(macbundler.DylibBundler, 'collect_sub_dependencies')
+    @patch.object(macbundler.DylibBundler, 'process_collected_deps')
     def test_bundle_dependencies(self, mock_process, mock_sub, mock_collect, sample_executable):
         """Test bundling dependencies (mocked DylibBundler)."""
         bundle = Bundle(sample_executable)
@@ -184,9 +184,9 @@ class TestBundle:
         mock_sub.assert_called_once()
         mock_process.assert_called_once()
 
-    @patch.object(bundler.DylibBundler, 'collect_dependencies')
-    @patch.object(bundler.DylibBundler, 'collect_sub_dependencies')
-    @patch.object(bundler.DylibBundler, 'process_collected_deps')
+    @patch.object(macbundler.DylibBundler, 'collect_dependencies')
+    @patch.object(macbundler.DylibBundler, 'collect_sub_dependencies')
+    @patch.object(macbundler.DylibBundler, 'process_collected_deps')
     def test_create_full_bundle(self, mock_process, mock_sub, mock_collect, sample_executable):
         """Test full bundle creation (mocked DylibBundler)."""
         bundle = Bundle(sample_executable, version="1.0")
@@ -203,9 +203,9 @@ class TestBundle:
 class TestMakeBundle:
     """Tests for make_bundle function."""
 
-    @patch.object(bundler.DylibBundler, 'collect_dependencies')
-    @patch.object(bundler.DylibBundler, 'collect_sub_dependencies')
-    @patch.object(bundler.DylibBundler, 'process_collected_deps')
+    @patch.object(macbundler.DylibBundler, 'collect_dependencies')
+    @patch.object(macbundler.DylibBundler, 'collect_sub_dependencies')
+    @patch.object(macbundler.DylibBundler, 'process_collected_deps')
     def test_make_bundle(self, mock_process, mock_sub, mock_collect, sample_executable):
         """Test make_bundle convenience function."""
         result = make_bundle(sample_executable, version="3.0", base_id="org.test")

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from bundler import Bundle, DylibBundler
+from macbundler import Bundle, DylibBundler
 
 
 @pytest.fixture

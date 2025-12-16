@@ -3,8 +3,8 @@ from os.path import dirname
 
 sys.path.insert(0, dirname(dirname(dirname(__file__))))
 
-import bundler
+import macbundler
 
-#bundler.make_bundle("exe")
-bundle = bundler.Bundle("demo")
+#macbundler.make_bundle("exe")
+bundle = macbundler.Bundle("demo")
 bundle.create()

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""bundler - macOS application bundler and dynamic library bundler.
+"""macbundler - macOS application bundler and dynamic library bundler.
 
 This module provides tools for:
 1. Creating macOS .app bundles with proper structure
@@ -14,27 +14,27 @@ https://github.com/auriamg/macdylibbundler
 
 Usage (CLI):
     # Bundle dylibs for an existing executable
-    bundler -od -cd -d My.app/Contents/libs/ My.app/Contents/MacOS/main
+    macbundler -od -cd -d My.app/Contents/libs/ My.app/Contents/MacOS/main
 
     # Create a new .app bundle from an executable
-    bundler --create-bundle /path/to/executable
+    macbundler --create-bundle /path/to/executable
 
 Usage (API):
-    from bundler import Bundle, DylibBundler, make_bundle
+    from macbundler import Bundle, DylibBundler, make_bundle
 
     # High-level: create bundle with dependencies
     bundle = Bundle("/path/to/executable")
     bundle.create()
 
     # Low-level: bundle dylibs manually
-    bundler = DylibBundler(
+    dylib_bundler = DylibBundler(
         dest_dir="./libs/",
         files_to_fix=["my_executable"],
         create_dir=True
     )
-    bundler.collect_dependencies(Path("my_executable"))
-    bundler.collect_sub_dependencies()
-    bundler.process_collected_deps()
+    dylib_bundler.collect_dependencies(Path("my_executable"))
+    dylib_bundler.collect_sub_dependencies()
+    dylib_bundler.process_collected_deps()
 """
 
 import argparse
@@ -96,7 +96,7 @@ INFO_PLIST_TMPL = """\
 
 
 class BundlerError(Exception):
-    """Base exception class for bundler errors."""
+    """Base exception class for macbundler errors."""
 
 
 class CommandError(BundlerError):
@@ -1080,7 +1080,7 @@ class DylibBundler:
                 is_arm = False
 
             try:
-                temp_dir = Path(tempfile.mkdtemp(prefix="dylibbundler."))
+                temp_dir = Path(tempfile.mkdtemp(prefix="macbundler."))
                 temp_file = temp_dir / file.name
 
                 # Copy file to temp location
@@ -1179,7 +1179,7 @@ def _add_common_options(parser: argparse.ArgumentParser) -> None:
 def _cmd_create(args: argparse.Namespace) -> None:
     """Handle 'create' subcommand."""
     setup_logging(args.verbose, not args.no_color)
-    log = logging.getLogger("bundler")
+    log = logging.getLogger("macbundler")
 
     target = Path(args.executable)
     if not target.exists():
@@ -1201,7 +1201,7 @@ def _cmd_create(args: argparse.Namespace) -> None:
 def _cmd_fix(args: argparse.Namespace) -> None:
     """Handle 'fix' subcommand."""
     setup_logging(args.verbose, not args.no_color)
-    log = logging.getLogger("bundler")
+    log = logging.getLogger("macbundler")
 
     bundler = DylibBundler(
         dest_dir=Path(args.dest),
@@ -1223,16 +1223,16 @@ def _cmd_fix(args: argparse.Namespace) -> None:
 
 
 def main() -> None:
-    """Command line interface for bundler."""
+    """Command line interface for macbundler."""
     try:
         parser = argparse.ArgumentParser(
-            prog="bundler",
+            prog="macbundler",
             description="Create macOS app bundles and bundle dynamic libraries.",
             epilog=(
                 "Examples:\n"
-                "  bundler create myapp\n"
-                "  bundler create myapp -v 2.0 -i com.example.myapp\n"
-                "  bundler fix App.app/Contents/MacOS/main -d App.app/Contents/libs/\n"
+                "  macbundler create myapp\n"
+                "  macbundler create myapp -v 2.0 -i com.example.myapp\n"
+                "  macbundler fix App.app/Contents/MacOS/main -d App.app/Contents/libs/\n"
             ),
             formatter_class=argparse.RawDescriptionHelpFormatter,
         )
@@ -1250,9 +1250,9 @@ def main() -> None:
             description="Create a new macOS .app bundle from an executable.",
             epilog=(
                 "Examples:\n"
-                "  bundler create myapp\n"
-                "  bundler create myapp --version 2.0 --id com.example.myapp\n"
-                "  bundler create myapp -e .plugin\n"
+                "  macbundler create myapp\n"
+                "  macbundler create myapp --version 2.0 --id com.example.myapp\n"
+                "  macbundler create myapp -e .plugin\n"
             ),
             formatter_class=argparse.RawDescriptionHelpFormatter,
         )
@@ -1295,9 +1295,9 @@ def main() -> None:
             description="Bundle dynamic libraries and fix paths in existing files.",
             epilog=(
                 "Examples:\n"
-                "  bundler fix App.app/Contents/MacOS/main -d App.app/Contents/libs/\n"
-                "  bundler fix main -d ./libs/ -s /opt/local/lib\n"
-                "  bundler fix main plugin.so -d ./libs/ --force\n"
+                "  macbundler fix App.app/Contents/MacOS/main -d App.app/Contents/libs/\n"
+                "  macbundler fix main -d ./libs/ -s /opt/local/lib\n"
+                "  macbundler fix main plugin.so -d ./libs/ --force\n"
             ),
             formatter_class=argparse.RawDescriptionHelpFormatter,
         )

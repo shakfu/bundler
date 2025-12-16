@@ -7,7 +7,7 @@ all: clean build lint typecheck test
 
 # Default target
 help:
-	@echo "bundler - macOS application bundler"
+	@echo "macbundler - macOS application bundler"
 	@echo ""
 	@echo "Usage: make [target]"
 	@echo ""
@@ -35,7 +35,7 @@ help:
 	@echo "  publish-test     Publish to Test PyPI"
 	@echo ""
 	@echo "Utilities:"
-	@echo "  run              Run bundler CLI"
+	@echo "  run              Run macbundler CLI"
 	@echo "  example          Build, run, and cleanup example"
 
 # ============================================================================
@@ -76,7 +76,7 @@ test-integration:
 	uv run pytest tests/test_integration.py -v
 
 coverage:
-	uv run pytest tests/ --cov=bundler --cov-report=term-missing --cov-report=html
+	uv run pytest tests/ --cov=macbundler --cov-report=term-missing --cov-report=html
 	@echo "Coverage report: htmlcov/index.html"
 
 # ============================================================================
@@ -96,7 +96,7 @@ format-check:
 	uv run ruff format --check .
 
 typecheck:
-	uv run mypy bundler.py --ignore-missing-imports
+	uv run mypy macbundler.py --ignore-missing-imports
 
 check: lint typecheck test
 	@echo "All checks passed!"
@@ -123,7 +123,7 @@ publish-test: build
 # ============================================================================
 
 run:
-	uv run python -m bundler $(ARGS)
+	uv run python -m macbundler $(ARGS)
 
 # Example: make bundle-example
 example:

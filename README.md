@@ -1,4 +1,4 @@
-# bundler
+# macbundler
 
 A Python toolkit for creating self-contained macOS application bundles with properly configured dynamic library dependencies.
 
@@ -15,10 +15,10 @@ A Python toolkit for creating self-contained macOS application bundles with prop
 
 ```bash
 # Using uv
-uv add bundler
+uv add macbundler
 
 # Using pip
-pip install bundler
+pip install macbundler
 ```
 
 ## Quick Start
@@ -27,16 +27,16 @@ pip install bundler
 
 ```bash
 # Create a new .app bundle from an executable
-bundler create myapp
+macbundler create myapp
 
 # Bundle dylibs for an existing app
-bundler fix My.app/Contents/MacOS/main -d My.app/Contents/libs/
+macbundler fix My.app/Contents/MacOS/main -d My.app/Contents/libs/
 ```
 
 ### Python API
 
 ```python
-from bundler import Bundle, make_bundle
+from macbundler import Bundle, make_bundle
 
 # High-level: create bundle with one call
 bundle_path = make_bundle("/path/to/myapp", version="1.0")
@@ -55,12 +55,12 @@ bundle.create()
 
 The CLI has two subcommands: `create` and `fix`.
 
-### `bundler create`
+### `macbundler create`
 
 Create a new macOS .app bundle from an executable.
 
 ```
-bundler create <executable> [options]
+macbundler create <executable> [options]
 
 Options:
   -v, --version VERSION   Bundle version (default: 1.0)
@@ -75,18 +75,18 @@ Options:
 **Examples:**
 
 ```bash
-bundler create myapp
-bundler create myapp --version 2.0 --id com.example.myapp
-bundler create myapp -e .plugin
-bundler create myapp -r ./resources -r ./data
+macbundler create myapp
+macbundler create myapp --version 2.0 --id com.example.myapp
+macbundler create myapp -e .plugin
+macbundler create myapp -r ./resources -r ./data
 ```
 
-### `bundler fix`
+### `macbundler fix`
 
 Bundle dynamic libraries and fix paths in existing files.
 
 ```
-bundler fix <files...> -d <dest> [options]
+macbundler fix <files...> -d <dest> [options]
 
 Options:
   -d, --dest DIR          Destination for bundled libraries (required)
@@ -102,10 +102,10 @@ Options:
 **Examples:**
 
 ```bash
-bundler fix My.app/Contents/MacOS/main -d My.app/Contents/libs/
-bundler fix main -d ./libs/ -s /opt/local/lib
-bundler fix main plugin.so -d ./libs/ --force
-bundler fix main -d ./libs/ -x /opt/local/lib
+macbundler fix My.app/Contents/MacOS/main -d My.app/Contents/libs/
+macbundler fix main -d ./libs/ -s /opt/local/lib
+macbundler fix main plugin.so -d ./libs/ --force
+macbundler fix main -d ./libs/ -x /opt/local/lib
 ```
 
 ## Python API Reference
@@ -115,7 +115,7 @@ bundler fix main -d ./libs/ -x /opt/local/lib
 Creates a complete macOS `.app` bundle structure.
 
 ```python
-from bundler import Bundle
+from macbundler import Bundle
 
 bundle = Bundle(
     target="/path/to/executable",  # Path to the executable
@@ -135,10 +135,10 @@ bundle_path = bundle.create()
 Low-level control over dynamic library bundling.
 
 ```python
-from bundler import DylibBundler
+from macbundler import DylibBundler
 from pathlib import Path
 
-bundler = DylibBundler(
+dylib_bundler = DylibBundler(
     dest_dir=Path("./libs/"),
     overwrite_dir=True,
     create_dir=True,
@@ -150,10 +150,10 @@ bundler = DylibBundler(
 )
 
 # Collect and process dependencies
-for file in bundler.files_to_fix:
-    bundler.collect_dependencies(file)
-bundler.collect_sub_dependencies()
-bundler.process_collected_deps()
+for file in dylib_bundler.files_to_fix:
+    dylib_bundler.collect_dependencies(file)
+dylib_bundler.collect_sub_dependencies()
+dylib_bundler.process_collected_deps()
 ```
 
 ### make_bundle
@@ -161,7 +161,7 @@ bundler.process_collected_deps()
 Convenience function for simple bundle creation.
 
 ```python
-from bundler import make_bundle
+from macbundler import make_bundle
 
 bundle_path = make_bundle(
     target="/path/to/myapp",

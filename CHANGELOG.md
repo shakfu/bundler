@@ -5,25 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.2.1]
+
+### Changed
+
+- **BREAKING**: Renamed project from `bundler` to `macbundler`
+  - Package name: `bundler` -> `macbundler`
+  - Module file: `bundler.py` -> `macbundler.py`
+  - CLI command: `bundler` -> `macbundler`
+  - Python imports: `from bundler import ...` -> `from macbundler import ...`
+
 ## [0.2.0]
 
 ### Changed
 
-- **BREAKING**: Merged `bundler.py` and `dylibbundler.py` into a single unified module
-- **BREAKING**: Redesigned CLI with subcommands (`bundler create`, `bundler fix`)
+- **BREAKING**: Merged `macbundler.py` and `dylibbundler.py` into a single unified module
+- **BREAKING**: Redesigned CLI with subcommands (`macbundler create`, `macbundler fix`)
 - `Bundle.create_frameworks()` renamed to `Bundle.bundle_dependencies()`
 - `Bundle.bundle_dependencies()` now uses `DylibBundler` instead of `macholib.macho_standalone`
 - Removed `macholib` dependency - the module is now dependency-free
 
 ### Added
 
-- `bundler create` subcommand for creating .app bundles
-- `bundler fix` subcommand for fixing dylib paths in existing files
+- `macbundler create` subcommand for creating .app bundles
+- `macbundler fix` subcommand for fixing dylib paths in existing files
 - `-e/--extension` option to set bundle suffix (default: `.app`)
 - `-f/--force` option to overwrite destination directory
 - `--verbose` option for debug logging
 - `Bundle` class now accepts `codesign` parameter to control ad-hoc signing
-- CLI entry point `bundler` via `pyproject.toml` scripts
+- CLI entry point `macbundler` via `pyproject.toml` scripts
 - Makefile with full development workflow (test, lint, format, typecheck, build, publish)
 - Integration tests with real compiled executables and dylib dependencies
 - Comprehensive test suite (38 tests: unit + integration)
@@ -33,7 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
-- `dylibbundler.py` - functionality merged into `bundler.py`
+- `dylibbundler.py` - functionality merged into `macbundler.py`
 - `DependencyTree` class - replaced by `DylibBundler`
 - `get_dependencies()` function - use `DylibBundler.collect_dependencies()` instead
 - `macholib` dependency
@@ -50,7 +62,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Initial release
-- `bundler.py` - High-level bundle creation using macholib
+- `macbundler.py` - High-level bundle creation using macholib
 - `dylibbundler.py` - Low-level dylib bundling (port of macdylibbundler)
 - `Bundle` class for creating macOS .app bundles
 - `BundleFolder` class for managing bundle directories
