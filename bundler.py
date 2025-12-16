@@ -52,10 +52,7 @@ from pathlib import Path
 # Type aliases
 Pathlike = Path | str
 
-CAVEAT = (
-    "MAY NOT CORRECTLY HANDLE THIS DEPENDENCY: "
-    "Manually check the executable with 'otool -L'"
-)
+CAVEAT = "MAY NOT CORRECTLY HANDLE THIS DEPENDENCY: Manually check the executable with 'otool -L'"
 
 INFO_PLIST_TMPL = """\
 <?xml version="1.0" encoding="UTF-8"?>
@@ -101,8 +98,6 @@ INFO_PLIST_TMPL = """\
 class BundlerError(Exception):
     """Base exception class for bundler errors."""
 
-    pass
-
 
 class CommandError(BundlerError):
     """Exception raised when a command fails."""
@@ -113,19 +108,17 @@ class CommandError(BundlerError):
         self.command = command
         self.returncode = returncode
         self.output = output
-        super().__init__(f"Command '{command}' failed with return code {returncode}")
+        super().__init__(
+            f"Command '{command}' failed with return code {returncode}"
+        )
 
 
 class FileError(BundlerError):
     """Exception raised when a file operation fails."""
 
-    pass
-
 
 class ConfigurationError(BundlerError):
     """Exception raised when configuration is invalid."""
-
-    pass
 
 
 # ----------------------------------------------------------------------------
@@ -164,7 +157,9 @@ class CustomFormatter(logging.Formatter):
 
     def __init__(self, use_color: bool = True):
         self.use_color = use_color
-        self.fmt = "%(delta)s - %(levelname)s - %(name)s.%(funcName)s - %(message)s"
+        self.fmt = (
+            "%(delta)s - %(levelname)s - %(name)s.%(funcName)s - %(message)s"
+        )
 
     def format(self, record: logging.LogRecord) -> str:
         """Format the log record with color if enabled."""
@@ -283,7 +278,8 @@ class Bundle:
         shutil.copy(self.target, self.executable)
         oldmode = os.stat(self.executable).st_mode
         os.chmod(
-            self.executable, oldmode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
+            self.executable,
+            oldmode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH,
         )
 
     def create_info_plist(self) -> None:
@@ -311,7 +307,7 @@ class Bundle:
             for resource in self.add_to_resources:
                 self.resources.copy(resource)
 
-    def create_frameworks(self) -> None:
+    def bundle_dependencies(self) -> None:
         """Bundle dynamic libraries using DylibBundler."""
         self.log.info("Bundling dynamic libraries for %s", self.executable)
 
@@ -341,7 +337,7 @@ class Bundle:
         self.create_info_plist()
         self.create_pkg_info()
         self.create_resources()
-        self.create_frameworks()
+        self.bundle_dependencies()
 
         self.log.info("Bundle created successfully: %s", self.bundle)
         return self.bundle
@@ -379,7 +375,9 @@ class Dependency:
 
         try:
             if self._is_rpath(path):
-                original_file = self.search_filename_in_rpaths(path, dependent_file)
+                original_file = self.search_filename_in_rpaths(
+                    path, dependent_file
+                )
             else:
                 try:
                     original_file = path.resolve()
@@ -405,7 +403,9 @@ class Dependency:
                 # Check if file is contained in one of the paths
                 for search_path in self.parent.search_paths:
                     if (search_path / self.filename).exists():
-                        self.log.info("FOUND %s in %s", self.filename, search_path)
+                        self.log.info(
+                            "FOUND %s in %s", self.filename, search_path
+                        )
                         self.prefix = search_path
                         break
 
@@ -424,7 +424,9 @@ class Dependency:
             self.new_name = self.filename
 
         except Exception as e:
-            raise FileError(f"Failed to initialize dependency for {path}: {e}") from e
+            raise FileError(
+                f"Failed to initialize dependency for {path}: {e}"
+            ) from e
 
     def _get_user_input_dir_for_file(self, filename: str) -> Path:
         """Prompt user for the directory containing a file.
@@ -440,7 +442,9 @@ class Dependency:
         """
         for search_path in self.parent.search_paths:
             if (search_path / filename).exists():
-                self.log.info("%s was found. %s", search_path / filename, CAVEAT)
+                self.log.info(
+                    "%s was found. %s", search_path / filename, CAVEAT
+                )
                 return search_path
 
         while True:
@@ -454,7 +458,9 @@ class Dependency:
 
             prefix_path = Path(prefix)
             if not (prefix_path / filename).exists():
-                self.log.info("%s does not exist. Try again", prefix_path / filename)
+                self.log.info(
+                    "%s does not exist. Try again", prefix_path / filename
+                )
                 continue
 
             self.log.info("%s was found. %s", prefix_path / filename, CAVEAT)
@@ -470,7 +476,9 @@ class Dependency:
         Returns:
             True if the path is rpath-relative
         """
-        return str(path).startswith("@rpath") or str(path).startswith("@loader_path")
+        return str(path).startswith("@rpath") or str(path).startswith(
+            "@loader_path"
+        )
 
     def _init_search_paths(self) -> None:
         """Initialize search paths from environment variables."""
@@ -523,9 +531,13 @@ class Dependency:
         """
         path_to_check = Path()
         if "@loader_path" in str(rpath):
-            path_to_check = Path(str(rpath).replace("@loader_path/", str(file_prefix)))
+            path_to_check = Path(
+                str(rpath).replace("@loader_path/", str(file_prefix))
+            )
         elif "@rpath" in str(rpath):
-            path_to_check = Path(str(rpath).replace("@rpath/", str(file_prefix)))
+            path_to_check = Path(
+                str(rpath).replace("@rpath/", str(file_prefix))
+            )
 
         try:
             fullpath = path_to_check.resolve()
@@ -633,9 +645,7 @@ class Dependency:
         shutil.copy2(self.get_original_path(), self.get_install_path())
 
         # Fix the lib's inner name
-        command = (
-            f'install_name_tool -id "{self.get_inner_path()}" "{self.get_install_path()}"'
-        )
+        command = f'install_name_tool -id "{self.get_inner_path()}" "{self.get_install_path()}"'
         if subprocess.call(command, shell=True) != 0:
             self.log.error(
                 "An error occurred while trying to change identity of library %s",
@@ -651,7 +661,9 @@ class Dependency:
 
         # Fix symlinks
         for symlink in self.symlinks:
-            self._change_install_name(file_to_fix, symlink, self.get_inner_path())
+            self._change_install_name(
+                file_to_fix, symlink, self.get_inner_path()
+            )
 
     def merge_if_same_as(self, other: "Dependency") -> bool:
         """Merge with another dependency if they refer to the same file.
@@ -721,7 +733,9 @@ class DylibBundler:
             self.can_codesign = codesign
             self.inside_lib_path = inside_lib_path
             self.files_to_fix = [Path(f) for f in (files_to_fix or [])]
-            self.prefixes_to_ignore = [Path(p) for p in (prefixes_to_ignore or [])]
+            self.prefixes_to_ignore = [
+                Path(p) for p in (prefixes_to_ignore or [])
+            ]
             self.search_paths = [Path(p) for p in (search_paths or [])]
 
             self.deps: list[Dependency] = []
@@ -740,7 +754,9 @@ class DylibBundler:
                 )
 
         except Exception as e:
-            raise ConfigurationError(f"Failed to initialize DylibBundler: {e}") from e
+            raise ConfigurationError(
+                f"Failed to initialize DylibBundler: {e}"
+            ) from e
 
     def add_search_path(self, path: Pathlike) -> None:
         """Add a search path for finding libraries."""
@@ -761,7 +777,9 @@ class DylibBundler:
     def is_system_library(self, prefix: Pathlike) -> bool:
         """Check if a prefix is a system library location."""
         prefix = str(prefix)
-        return prefix.startswith("/usr/lib/") or prefix.startswith("/System/Library/")
+        return prefix.startswith("/usr/lib/") or prefix.startswith(
+            "/System/Library/"
+        )
 
     def is_ignored_prefix(self, prefix: Pathlike) -> bool:
         """Check if a prefix is in the ignore list."""
@@ -831,7 +849,9 @@ class DylibBundler:
     def _collect_dependency_lines(self, filename: Path) -> list[str]:
         """Execute otool -l and collect dependency lines."""
         if not filename.exists():
-            self.log.error("Cannot find file %s to read its dependencies", filename)
+            self.log.error(
+                "Cannot find file %s to read its dependencies", filename
+            )
             sys.exit(1)
 
         cmd = f'otool -l "{filename}"'
@@ -862,7 +882,9 @@ class DylibBundler:
     def collect_rpaths(self, filename: Path) -> None:
         """Collect rpaths for a given file."""
         if not filename.exists():
-            self.log.warning("can't collect rpaths for nonexistent file '%s'", filename)
+            self.log.warning(
+                "can't collect rpaths for nonexistent file '%s'", filename
+            )
             return
 
         cmd = f'otool -l "{filename}"'
@@ -922,7 +944,9 @@ class DylibBundler:
         if not in_deps:
             self.deps.append(dep)
         if not in_deps_per_file:
-            self.deps_per_file[filename] = self.deps_per_file.get(filename, []) + [dep]
+            self.deps_per_file[filename] = self.deps_per_file.get(
+                filename, []
+            ) + [dep]
 
     def collect_sub_dependencies(self) -> None:
         """Recursively collect each dependency's dependencies."""
@@ -953,7 +977,9 @@ class DylibBundler:
             self.log.info("Processing dependency %s", dep.get_install_path())
             dep.copy_yourself()
             self.change_lib_paths_on_file(dep.get_install_path())
-            self.fix_rpaths_on_file(dep.get_original_path(), dep.get_install_path())
+            self.fix_rpaths_on_file(
+                dep.get_original_path(), dep.get_install_path()
+            )
             self.adhoc_codesign(dep.get_install_path())
 
         for file in reversed(self.files_to_fix):
@@ -978,7 +1004,9 @@ class DylibBundler:
             try:
                 shutil.rmtree(dest_dir)
             except OSError as e:
-                raise FileError(f"Failed to overwrite destination directory: {e}") from e
+                raise FileError(
+                    f"Failed to overwrite destination directory: {e}"
+                ) from e
             dest_exists = False
 
         if not dest_exists:
@@ -987,7 +1015,9 @@ class DylibBundler:
                 try:
                     dest_dir.mkdir(parents=True)
                 except OSError as e:
-                    raise FileError(f"Failed to create destination directory: {e}") from e
+                    raise FileError(
+                        f"Failed to create destination directory: {e}"
+                    ) from e
             else:
                 raise FileError(
                     "Destination directory does not exist and create_dir is False"
@@ -1003,7 +1033,9 @@ class DylibBundler:
         for dep in deps_in_file:
             dep.fix_file_that_depends_on_me(file_to_fix)
 
-    def fix_rpaths_on_file(self, original_file: Path, file_to_fix: Path) -> None:
+    def fix_rpaths_on_file(
+        self, original_file: Path, file_to_fix: Path
+    ) -> None:
         """Fix rpaths in a file."""
         rpaths_to_fix = self.rpaths_per_file.get(original_file, [])
 
@@ -1029,7 +1061,7 @@ class DylibBundler:
 
         self.log.info("codesign %s", file)
         sign_command = (
-            f'codesign --force --deep --preserve-metadata=entitlements,'
+            f"codesign --force --deep --preserve-metadata=entitlements,"
             f'requirements,flags,runtime --sign - "{file}"'
         )
 
@@ -1037,8 +1069,7 @@ class DylibBundler:
             self.run_command(sign_command)
         except CommandError:
             self.log.error(
-                "An error occurred while applying ad-hoc signature to %s. "
-                "Attempting workaround",
+                "An error occurred while applying ad-hoc signature to %s. Attempting workaround",
                 file,
             )
 
@@ -1064,14 +1095,19 @@ class DylibBundler:
                 except CommandError as e:
                     if is_arm:
                         raise CommandError(
-                            f"Failed to sign {file} on ARM: {e}", e.returncode, e.output
+                            f"Failed to sign {file} on ARM: {e}",
+                            e.returncode,
+                            e.output,
                         ) from e
                     self.log.error(
-                        "An error occurred while applying ad-hoc signature to %s", file
+                        "An error occurred while applying ad-hoc signature to %s",
+                        file,
                     )
             except Exception as e:
                 if is_arm:
-                    raise CommandError(f"Failed to sign {file} on ARM: {e}", 1) from e
+                    raise CommandError(
+                        f"Failed to sign {file} on ARM: {e}", 1
+                    ) from e
                 self.log.error(" %s", str(e))
 
 
@@ -1186,8 +1222,15 @@ def main() -> None:
             action="append",
             help="ignore libraries in this directory (can be repeated)",
         )
-        opt("-dm", "--debug-mode", help="enable debug mode", action="store_true")
-        opt("-nc", "--no-color", help="disable color in logging", action="store_true")
+        opt(
+            "-dm", "--debug-mode", help="enable debug mode", action="store_true"
+        )
+        opt(
+            "-nc",
+            "--no-color",
+            help="disable color in logging",
+            action="store_true",
+        )
 
         # Bundle creation options
         opt(
@@ -1214,6 +1257,12 @@ def main() -> None:
             action="append",
             help="add resource to bundle (can be repeated, for --create-bundle)",
         )
+        opt(
+            "-e",
+            "--extension",
+            default=".app",
+            help="bundle extension/suffix (for --create-bundle, default: .app)",
+        )
 
         args = parser.parse_args()
 
@@ -1224,7 +1273,9 @@ def main() -> None:
         if args.create_bundle:
             # Create a new .app bundle
             if len(args.target) != 1:
-                log.error("--create-bundle requires exactly one target executable")
+                log.error(
+                    "--create-bundle requires exactly one target executable"
+                )
                 sys.exit(1)
 
             target = Path(args.target[0])
@@ -1237,6 +1288,7 @@ def main() -> None:
                 version=args.bundle_version,
                 add_to_resources=args.resource,
                 base_id=args.base_id,
+                extension=args.extension,
                 codesign=not args.no_codesign,
             )
             bundle.create()

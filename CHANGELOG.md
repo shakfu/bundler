@@ -12,15 +12,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **BREAKING**: Merged `bundler.py` and `dylibbundler.py` into a single unified module
 - `Bundle.create_frameworks()` now uses `DylibBundler` instead of `macholib.macho_standalone`
 - Removed `macholib` dependency - the module is now dependency-free
-- Updated version to 0.2.0
 
 ### Added
 
 - Unified CLI with `--create-bundle` flag for high-level bundle creation
+- `-e/--extension` CLI option to set bundle suffix (default: `.app`)
 - `Bundle` class now accepts `codesign` parameter to control ad-hoc signing
 - CLI entry point `bundler` via `pyproject.toml` scripts
-- Comprehensive test suite with 35 unit tests
+- Makefile with full development workflow (test, lint, format, typecheck, build, publish)
+- Integration tests with real compiled executables and dylib dependencies
+- Comprehensive test suite (38 tests: unit + integration)
 - Full API documentation in README.md
+- Dev dependencies: ruff, mypy, pytest-cov, twine
+- Tool configurations in pyproject.toml for ruff, mypy, and coverage
 
 ### Removed
 
@@ -33,6 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - CLI now properly supports repeatable options (`-s`, `-i`, `-r`)
 - Improved error handling with dedicated exception classes
+- Exception chaining with `raise ... from` for better tracebacks
 
 ## [0.1.0]
 

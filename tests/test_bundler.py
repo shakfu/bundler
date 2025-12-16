@@ -173,12 +173,12 @@ class TestBundle:
     @patch.object(bundler.DylibBundler, 'collect_dependencies')
     @patch.object(bundler.DylibBundler, 'collect_sub_dependencies')
     @patch.object(bundler.DylibBundler, 'process_collected_deps')
-    def test_create_frameworks(self, mock_process, mock_sub, mock_collect, sample_executable):
-        """Test creating frameworks (mocked DylibBundler)."""
+    def test_bundle_dependencies(self, mock_process, mock_sub, mock_collect, sample_executable):
+        """Test bundling dependencies (mocked DylibBundler)."""
         bundle = Bundle(sample_executable)
         bundle.macos.mkdir(parents=True)
         bundle.create_executable()
-        bundle.create_frameworks()
+        bundle.bundle_dependencies()
 
         mock_collect.assert_called_once()
         mock_sub.assert_called_once()
