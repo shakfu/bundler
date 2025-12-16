@@ -19,12 +19,14 @@ def temp_dir():
     with tempfile.TemporaryDirectory() as tmpdirname:
         yield Path(tmpdirname)
 
+
 @pytest.fixture
 def sample_lib_path(temp_dir):
     """Create a sample library path structure."""
     lib_path = temp_dir / "libs"
     lib_path.mkdir()
     return lib_path
+
 
 @pytest.fixture
 def sample_executable(temp_dir):
@@ -33,6 +35,7 @@ def sample_executable(temp_dir):
     exe_path.touch()
     exe_path.chmod(0o755)
     return exe_path
+
 
 @pytest.fixture
 def bundler_instance(temp_dir, sample_lib_path, sample_executable):
@@ -48,6 +51,7 @@ def bundler_instance(temp_dir, sample_lib_path, sample_executable):
         search_paths=[],
     )
 
+
 # Test cases
 def test_dependency_initialization(bundler_instance, temp_dir):
     """Test Dependency class initialization."""
@@ -60,6 +64,7 @@ def test_dependency_initialization(bundler_instance, temp_dir):
     # Use resolve() to handle macOS /var -> /private/var symlink
     assert dep.prefix == temp_dir.resolve()
 
+
 def test_dependency_path_resolution(bundler_instance, temp_dir):
     """Test dependency path resolution."""
     # Create a test library
@@ -70,6 +75,7 @@ def test_dependency_path_resolution(bundler_instance, temp_dir):
     # Use resolve() to handle macOS /var -> /private/var symlink
     assert dep.get_original_path() == lib_path.resolve()
     assert dep.get_install_path() == bundler_instance.dest_dir / "test.dylib"
+
 
 def test_bundler_creation(temp_dir, sample_lib_path, sample_executable):
     """Test DylibBundler initialization."""
@@ -85,6 +91,7 @@ def test_bundler_creation(temp_dir, sample_lib_path, sample_executable):
     assert bundler.can_create_dir is True
     assert bundler.can_codesign is False
 
+
 def test_bundler_invalid_configuration_no_files():
     """Test invalid DylibBundler configuration - no files to fix."""
     with pytest.raises(ConfigurationError):
@@ -94,6 +101,7 @@ def test_bundler_invalid_configuration_no_files():
             files_to_fix=[],
         )
 
+
 def test_bundler_invalid_configuration_no_dest():
     """Test invalid DylibBundler configuration - no dest dir."""
     with pytest.raises(ConfigurationError):
@@ -102,6 +110,7 @@ def test_bundler_invalid_configuration_no_dest():
             create_dir=False,
             files_to_fix=["test"],
         )
+
 
 def test_dependency_collection(bundler_instance, temp_dir):
     """Test dependency collection functionality."""
@@ -118,6 +127,7 @@ def test_dependency_collection(bundler_instance, temp_dir):
     assert exe_path in bundler_instance.deps_collected
     assert bundler_instance.deps_collected[exe_path] is True
 
+
 def test_search_path_handling(bundler_instance, temp_dir):
     """Test search path handling."""
     search_path = temp_dir / "search_path"
@@ -125,6 +135,7 @@ def test_search_path_handling(bundler_instance, temp_dir):
 
     bundler_instance.add_search_path(search_path)
     assert search_path in bundler_instance.search_paths
+
 
 def test_ignore_prefix_handling(bundler_instance, temp_dir):
     """Test ignore prefix functionality."""
@@ -135,11 +146,21 @@ def test_ignore_prefix_handling(bundler_instance, temp_dir):
     assert ignore_path in bundler_instance.prefixes_to_ignore
     assert bundler_instance.is_ignored_prefix(ignore_path) is True
 
+
 def test_system_library_detection(bundler_instance):
     """Test system library detection."""
     assert bundler_instance.is_system_library("/usr/lib/libc.dylib") is True
-    assert bundler_instance.is_system_library("/System/Library/Frameworks/CoreFoundation.framework") is True
-    assert bundler_instance.is_system_library("/usr/local/lib/libtest.dylib") is False
+    assert (
+        bundler_instance.is_system_library(
+            "/System/Library/Frameworks/CoreFoundation.framework"
+        )
+        is True
+    )
+    assert (
+        bundler_instance.is_system_library("/usr/local/lib/libtest.dylib")
+        is False
+    )
+
 
 def test_command_execution(bundler_instance, temp_dir):
     """Test command execution functionality."""
@@ -151,6 +172,7 @@ def test_command_execution(bundler_instance, temp_dir):
     with pytest.raises(CommandError):
         bundler_instance.run_command("false", shell=True)
 
+
 def test_file_permission_changes(bundler_instance, temp_dir):
     """Test file permission changes."""
     test_file = temp_dir / "test_file"
@@ -158,6 +180,7 @@ def test_file_permission_changes(bundler_instance, temp_dir):
 
     bundler_instance.chmod(test_file, 0o755)
     assert test_file.stat().st_mode & 0o777 == 0o755
+
 
 def test_dest_dir_creation(bundler_instance, temp_dir):
     """Test destination directory creation."""
@@ -167,6 +190,7 @@ def test_dest_dir_creation(bundler_instance, temp_dir):
     bundler_instance.create_dest_dir()
     assert dest_dir.exists()
     assert dest_dir.is_dir()
+
 
 def test_dependency_merging(bundler_instance, temp_dir):
     """Test dependency merging functionality."""
@@ -178,6 +202,7 @@ def test_dependency_merging(bundler_instance, temp_dir):
     dep2 = Dependency(bundler_instance, lib_path, temp_dir / "exe2")
 
     assert dep1.merge_if_same_as(dep2) is True
+
 
 def test_rpath_handling(bundler_instance, temp_dir):
     """Test rpath handling functionality."""
@@ -191,6 +216,7 @@ def test_rpath_handling(bundler_instance, temp_dir):
     # The file may or may not be in rpaths_per_file depending on otool output
     # For a non-Mach-O file, rpaths_per_file will be empty or not contain the key
     assert isinstance(bundler_instance.rpaths_per_file, dict)
+
 
 def test_dependency_copying(bundler_instance, temp_dir):
     """Test dependency copying functionality - file copy part only.
@@ -210,15 +236,18 @@ def test_dependency_copying(bundler_instance, temp_dir):
     assert dep.get_install_path() == bundler_instance.dest_dir / "test.dylib"
     assert dep.get_inner_path() == "@executable_path/../libs/test.dylib"
 
+
 def test_error_handling_command_error(bundler_instance):
     """Test CommandError handling."""
     with pytest.raises(CommandError):
         bundler_instance.run_command("nonexistent_command_xyz123", shell=True)
 
+
 def test_error_handling_configuration_error():
     """Test ConfigurationError handling."""
     with pytest.raises(ConfigurationError):
         DylibBundler(dest_dir=None, create_dir=False, files_to_fix=["test"])
+
 
 def test_error_handling_file_error(temp_dir, sample_executable):
     """Test FileError handling when dest dir cannot be created."""
@@ -232,6 +261,7 @@ def test_error_handling_file_error(temp_dir, sample_executable):
     )
     with pytest.raises(FileError):
         bundler.create_dest_dir()
+
 
 if __name__ == "__main__":
     pytest.main([__file__])

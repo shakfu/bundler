@@ -116,7 +116,9 @@ class TestBundle:
         assert bundle.version == "2.0"
         assert bundle.base_id == "com.example"
         assert bundle.extension == ".application"
-        assert bundle.bundle == sample_executable.parent / "test_app.application"
+        assert (
+            bundle.bundle == sample_executable.parent / "test_app.application"
+        )
 
     def test_create_executable(self, sample_executable):
         """Test creating bundle executable."""
@@ -125,7 +127,9 @@ class TestBundle:
         bundle.create_executable()
 
         assert bundle.executable.exists()
-        assert bundle.executable.stat().st_mode & 0o111  # Has execute permissions
+        assert (
+            bundle.executable.stat().st_mode & 0o111
+        )  # Has execute permissions
 
     def test_create_info_plist(self, sample_executable):
         """Test creating Info.plist."""
@@ -170,10 +174,12 @@ class TestBundle:
 
         assert not bundle.resources.path.exists()
 
-    @patch.object(macbundler.DylibBundler, 'collect_dependencies')
-    @patch.object(macbundler.DylibBundler, 'collect_sub_dependencies')
-    @patch.object(macbundler.DylibBundler, 'process_collected_deps')
-    def test_bundle_dependencies(self, mock_process, mock_sub, mock_collect, sample_executable):
+    @patch.object(macbundler.DylibBundler, "collect_dependencies")
+    @patch.object(macbundler.DylibBundler, "collect_sub_dependencies")
+    @patch.object(macbundler.DylibBundler, "process_collected_deps")
+    def test_bundle_dependencies(
+        self, mock_process, mock_sub, mock_collect, sample_executable
+    ):
         """Test bundling dependencies (mocked DylibBundler)."""
         bundle = Bundle(sample_executable)
         bundle.macos.mkdir(parents=True)
@@ -184,10 +190,12 @@ class TestBundle:
         mock_sub.assert_called_once()
         mock_process.assert_called_once()
 
-    @patch.object(macbundler.DylibBundler, 'collect_dependencies')
-    @patch.object(macbundler.DylibBundler, 'collect_sub_dependencies')
-    @patch.object(macbundler.DylibBundler, 'process_collected_deps')
-    def test_create_full_bundle(self, mock_process, mock_sub, mock_collect, sample_executable):
+    @patch.object(macbundler.DylibBundler, "collect_dependencies")
+    @patch.object(macbundler.DylibBundler, "collect_sub_dependencies")
+    @patch.object(macbundler.DylibBundler, "process_collected_deps")
+    def test_create_full_bundle(
+        self, mock_process, mock_sub, mock_collect, sample_executable
+    ):
         """Test full bundle creation (mocked DylibBundler)."""
         bundle = Bundle(sample_executable, version="1.0")
         result = bundle.create()
@@ -203,12 +211,16 @@ class TestBundle:
 class TestMakeBundle:
     """Tests for make_bundle function."""
 
-    @patch.object(macbundler.DylibBundler, 'collect_dependencies')
-    @patch.object(macbundler.DylibBundler, 'collect_sub_dependencies')
-    @patch.object(macbundler.DylibBundler, 'process_collected_deps')
-    def test_make_bundle(self, mock_process, mock_sub, mock_collect, sample_executable):
+    @patch.object(macbundler.DylibBundler, "collect_dependencies")
+    @patch.object(macbundler.DylibBundler, "collect_sub_dependencies")
+    @patch.object(macbundler.DylibBundler, "process_collected_deps")
+    def test_make_bundle(
+        self, mock_process, mock_sub, mock_collect, sample_executable
+    ):
         """Test make_bundle convenience function."""
-        result = make_bundle(sample_executable, version="3.0", base_id="org.test")
+        result = make_bundle(
+            sample_executable, version="3.0", base_id="org.test"
+        )
 
         assert result.exists()
         assert result.name == "test_app.app"

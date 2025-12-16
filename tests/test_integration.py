@@ -57,9 +57,12 @@ int main(int argc, char *argv[]) {
     # Compile the dylib with install_name set to its absolute path
     # (simulating a library installed in a non-system location)
     compile_lib = [
-        "clang", "-dynamiclib",
-        "-o", str(dylib_path),
-        "-install_name", str(dylib_path),
+        "clang",
+        "-dynamiclib",
+        "-o",
+        str(dylib_path),
+        "-install_name",
+        str(dylib_path),
         str(lib_c),
     ]
     result = subprocess.run(compile_lib, capture_output=True, text=True)
@@ -69,8 +72,10 @@ int main(int argc, char *argv[]) {
     # Compile the executable, linking against the dylib
     compile_exe = [
         "clang",
-        "-o", str(exe_path),
-        "-L", str(build_dir),
+        "-o",
+        str(exe_path),
+        "-L",
+        str(build_dir),
         "-lgreeting",
         str(exe_c),
     ]
@@ -81,7 +86,9 @@ int main(int argc, char *argv[]) {
     # Verify the executable runs correctly before bundling
     env = os.environ.copy()
     env["DYLD_LIBRARY_PATH"] = str(build_dir)
-    result = subprocess.run([str(exe_path)], capture_output=True, text=True, env=env)
+    result = subprocess.run(
+        [str(exe_path)], capture_output=True, text=True, env=env
+    )
     if result.returncode != 0:
         pytest.fail(f"Executable failed to run: {result.stderr}")
     assert "Hello, World!" in result.stdout
@@ -125,8 +132,9 @@ class TestIntegrationBundle:
             capture_output=True,
             text=True,
         )
-        assert "@executable_path/../libs/libgreeting.dylib" in otool_result.stdout, \
-            "Executable should reference dylib via @executable_path"
+        assert (
+            "@executable_path/../libs/libgreeting.dylib" in otool_result.stdout
+        ), "Executable should reference dylib via @executable_path"
 
         # Verify the bundled dylib's install name was updated
         otool_result = subprocess.run(
@@ -134,8 +142,9 @@ class TestIntegrationBundle:
             capture_output=True,
             text=True,
         )
-        assert "@executable_path/../libs/libgreeting.dylib" in otool_result.stdout, \
-            "Bundled dylib should have updated install name"
+        assert (
+            "@executable_path/../libs/libgreeting.dylib" in otool_result.stdout
+        ), "Bundled dylib should have updated install name"
 
         # Run the bundled executable (should work without DYLD_LIBRARY_PATH)
         result = subprocess.run(
@@ -143,8 +152,12 @@ class TestIntegrationBundle:
             capture_output=True,
             text=True,
         )
-        assert result.returncode == 0, f"Bundled executable failed: {result.stderr}"
-        assert "Hello, World!" in result.stdout, "Bundled executable should produce correct output"
+        assert result.returncode == 0, (
+            f"Bundled executable failed: {result.stderr}"
+        )
+        assert "Hello, World!" in result.stdout, (
+            "Bundled executable should produce correct output"
+        )
 
 
 class TestIntegrationDylibBundler:
@@ -158,11 +171,13 @@ class TestIntegrationDylibBundler:
         libs_dir = build_dir / "standalone_libs"
         if libs_dir.exists():
             import shutil
+
             shutil.rmtree(libs_dir)
 
         # Copy executable to a new location to avoid modifying the original
         standalone_exe = build_dir / "hello_standalone"
         import shutil
+
         shutil.copy2(exe_path, standalone_exe)
 
         # Use DylibBundler to bundle dependencies
@@ -188,7 +203,10 @@ class TestIntegrationDylibBundler:
             capture_output=True,
             text=True,
         )
-        assert "@executable_path/../standalone_libs/libgreeting.dylib" in otool_result.stdout
+        assert (
+            "@executable_path/../standalone_libs/libgreeting.dylib"
+            in otool_result.stdout
+        )
 
 
 class TestIntegrationChainedDependencies:
@@ -234,35 +252,56 @@ int main(int argc, char *argv[]) {
         exe_path = build_dir / "chained"
 
         # Compile libB
-        result = subprocess.run([
-            "clang", "-dynamiclib",
-            "-o", str(lib_b_path),
-            "-install_name", str(lib_b_path),
-            str(build_dir / "lib_b.c"),
-        ], capture_output=True, text=True)
+        result = subprocess.run(
+            [
+                "clang",
+                "-dynamiclib",
+                "-o",
+                str(lib_b_path),
+                "-install_name",
+                str(lib_b_path),
+                str(build_dir / "lib_b.c"),
+            ],
+            capture_output=True,
+            text=True,
+        )
         if result.returncode != 0:
             pytest.fail(f"Failed to compile libB: {result.stderr}")
 
         # Compile libA (linking to libB)
-        result = subprocess.run([
-            "clang", "-dynamiclib",
-            "-o", str(lib_a_path),
-            "-install_name", str(lib_a_path),
-            "-L", str(build_dir),
-            "-lhelper",
-            str(build_dir / "lib_a.c"),
-        ], capture_output=True, text=True)
+        result = subprocess.run(
+            [
+                "clang",
+                "-dynamiclib",
+                "-o",
+                str(lib_a_path),
+                "-install_name",
+                str(lib_a_path),
+                "-L",
+                str(build_dir),
+                "-lhelper",
+                str(build_dir / "lib_a.c"),
+            ],
+            capture_output=True,
+            text=True,
+        )
         if result.returncode != 0:
             pytest.fail(f"Failed to compile libA: {result.stderr}")
 
         # Compile executable (linking to libA)
-        result = subprocess.run([
-            "clang",
-            "-o", str(exe_path),
-            "-L", str(build_dir),
-            "-lmain",
-            str(build_dir / "chained.c"),
-        ], capture_output=True, text=True)
+        result = subprocess.run(
+            [
+                "clang",
+                "-o",
+                str(exe_path),
+                "-L",
+                str(build_dir),
+                "-lmain",
+                str(build_dir / "chained.c"),
+            ],
+            capture_output=True,
+            text=True,
+        )
         if result.returncode != 0:
             pytest.fail(f"Failed to compile executable: {result.stderr}")
 
@@ -276,8 +315,12 @@ int main(int argc, char *argv[]) {
 
         # Verify both dylibs were bundled
         libs_dir = bundle_path / "Contents" / "libs"
-        assert (libs_dir / "libmain.dylib").exists(), "libmain.dylib should be bundled"
-        assert (libs_dir / "libhelper.dylib").exists(), "libhelper.dylib should be bundled"
+        assert (libs_dir / "libmain.dylib").exists(), (
+            "libmain.dylib should be bundled"
+        )
+        assert (libs_dir / "libhelper.dylib").exists(), (
+            "libhelper.dylib should be bundled"
+        )
 
         # Verify libA's dependency on libB was updated
         otool_result = subprocess.run(
@@ -285,8 +328,9 @@ int main(int argc, char *argv[]) {
             capture_output=True,
             text=True,
         )
-        assert "@executable_path/../libs/libhelper.dylib" in otool_result.stdout, \
-            "libmain.dylib should reference libhelper.dylib via @executable_path"
+        assert (
+            "@executable_path/../libs/libhelper.dylib" in otool_result.stdout
+        ), "libmain.dylib should reference libhelper.dylib via @executable_path"
 
         # Run the bundled executable
         exe_in_bundle = bundle_path / "Contents" / "MacOS" / "chained"
@@ -295,5 +339,7 @@ int main(int argc, char *argv[]) {
             capture_output=True,
             text=True,
         )
-        assert result.returncode == 0, f"Bundled executable failed: {result.stderr}"
+        assert result.returncode == 0, (
+            f"Bundled executable failed: {result.stderr}"
+        )
         assert "Helper called" in result.stdout

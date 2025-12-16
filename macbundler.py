@@ -49,6 +49,12 @@ import sys
 import tempfile
 from pathlib import Path
 
+
+# ----------------------------------------------------------------------------
+# Constants
+
+__version__ = "0.1.2"
+
 # Type aliases
 Pathlike = Path | str
 
@@ -1261,26 +1267,31 @@ def main() -> None:
             help="path to the executable to bundle",
         )
         create_parser.add_argument(
-            "-o", "--output",
+            "-o",
+            "--output",
             help="output directory (default: same as executable)",
         )
         create_parser.add_argument(
-            "-v", "--version",
+            "-v",
+            "--version",
             default="1.0",
             help="bundle version (default: 1.0)",
         )
         create_parser.add_argument(
-            "-i", "--id",
+            "-i",
+            "--id",
             default="org.me",
             help="bundle identifier prefix (default: org.me)",
         )
         create_parser.add_argument(
-            "-e", "--extension",
+            "-e",
+            "--extension",
             default=".app",
             help="bundle extension (default: .app)",
         )
         create_parser.add_argument(
-            "-r", "--resource",
+            "-r",
+            "--resource",
             action="append",
             metavar="PATH",
             help="add resource to bundle (repeatable)",
@@ -1307,31 +1318,36 @@ def main() -> None:
             help="files to fix (executables or plugins)",
         )
         fix_parser.add_argument(
-            "-d", "--dest",
+            "-d",
+            "--dest",
             required=True,
             metavar="DIR",
             help="destination directory for bundled libraries",
         )
         fix_parser.add_argument(
-            "-p", "--prefix",
+            "-p",
+            "--prefix",
             default="@executable_path/../libs/",
             metavar="PATH",
             help="library install path prefix (default: @executable_path/../libs/)",
         )
         fix_parser.add_argument(
-            "-s", "--search",
+            "-s",
+            "--search",
             action="append",
             metavar="DIR",
             help="additional search path (repeatable)",
         )
         fix_parser.add_argument(
-            "-x", "--exclude",
+            "-x",
+            "--exclude",
             action="append",
             metavar="DIR",
             help="exclude libraries from directory (repeatable)",
         )
         fix_parser.add_argument(
-            "-f", "--force",
+            "-f",
+            "--force",
             action="store_true",
             help="overwrite destination directory if it exists",
         )
