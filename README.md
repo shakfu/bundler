@@ -27,10 +27,10 @@ pip install bundler
 
 ```bash
 # Create a new .app bundle from an executable
-bundler --create-bundle /path/to/myapp
+bundler create myapp
 
 # Bundle dylibs for an existing app
-bundler -od -cd -d My.app/Contents/libs/ My.app/Contents/MacOS/main
+bundler fix My.app/Contents/MacOS/main -d My.app/Contents/libs/
 ```
 
 ### Python API
@@ -53,57 +53,59 @@ bundle.create()
 
 ## CLI Reference
 
+The CLI has two subcommands: `create` and `fix`.
+
+### `bundler create`
+
+Create a new macOS .app bundle from an executable.
+
 ```
-usage: bundler [-h] [-d DEST_DIR] [-p INSTALL_PATH] [-s SEARCH_PATH] [-od]
-               [-cd] [-ns] [-i IGNORE] [-dm] [-nc] [-b] [-v VERSION]
-               [--base-id BASE_ID] [-r RESOURCE]
-               target [target ...]
+bundler create <executable> [options]
 
-bundler is a utility for creating macOS app bundles and bundling dynamic
-libraries inside them.
-
-positional arguments:
-  target                file to fix (executable or app plug-in)
-
-options:
-  -h, --help            show this help message and exit
-  -d, --dest-dir DEST_DIR
-                        directory to send bundled libraries (relative to cwd)
-  -p, --install-path INSTALL_PATH
-                        'inner' path of bundled libraries (usually relative to
-                        executable)
-  -s, --search-path SEARCH_PATH
-                        directory to add to list of locations searched (can be
-                        repeated)
-  -od, --overwrite-dir  overwrite output directory if it already exists.
-                        implies --create-dir
-  -cd, --create-dir     creates output directory if necessary
-  -ns, --no-codesign    disables ad-hoc codesigning
-  -i, --ignore IGNORE   ignore libraries in this directory (can be repeated)
-  -dm, --debug-mode     enable debug mode
-  -nc, --no-color       disable color in logging
-
-Bundle creation options:
-  -b, --create-bundle   create a new .app bundle from the target executable
-  -v, --version VERSION bundle version (for --create-bundle)
-  --base-id BASE_ID     bundle identifier prefix (for --create-bundle)
-  -r, --resource RESOURCE
-                        add resource to bundle (can be repeated)
+Options:
+  -v, --version VERSION   Bundle version (default: 1.0)
+  -i, --id ID             Bundle identifier prefix (default: org.me)
+  -e, --extension EXT     Bundle extension (default: .app)
+  -r, --resource PATH     Add resource to bundle (repeatable)
+  --no-sign               Disable ad-hoc codesigning
+  --verbose               Enable debug logging
+  --no-color              Disable colored output
 ```
 
-### Examples
+**Examples:**
 
 ```bash
-# Create a bundle with custom version and identifier
-bundler -b -v 2.0 --base-id com.mycompany /path/to/myapp
+bundler create myapp
+bundler create myapp --version 2.0 --id com.example.myapp
+bundler create myapp -e .plugin
+bundler create myapp -r ./resources -r ./data
+```
 
-# Bundle dylibs with additional search paths
-bundler -od -cd -s /opt/local/lib -s /usr/local/lib \
-    -d My.app/Contents/libs/ My.app/Contents/MacOS/main
+### `bundler fix`
 
-# Ignore system libraries in specific directories
-bundler -od -cd -i /opt/local/lib \
-    -d My.app/Contents/libs/ My.app/Contents/MacOS/main
+Bundle dynamic libraries and fix paths in existing files.
+
+```
+bundler fix <files...> -d <dest> [options]
+
+Options:
+  -d, --dest DIR          Destination for bundled libraries (required)
+  -p, --prefix PATH       Library path prefix (default: @executable_path/../libs/)
+  -s, --search DIR        Additional search path (repeatable)
+  -x, --exclude DIR       Exclude libraries from directory (repeatable)
+  -f, --force             Overwrite destination directory
+  --no-sign               Disable ad-hoc codesigning
+  --verbose               Enable debug logging
+  --no-color              Disable colored output
+```
+
+**Examples:**
+
+```bash
+bundler fix My.app/Contents/MacOS/main -d My.app/Contents/libs/
+bundler fix main -d ./libs/ -s /opt/local/lib
+bundler fix main plugin.so -d ./libs/ --force
+bundler fix main -d ./libs/ -x /opt/local/lib
 ```
 
 ## Python API Reference

@@ -1157,163 +1157,189 @@ def make_bundle(
 # Command-line interface
 
 
+def _add_common_options(parser: argparse.ArgumentParser) -> None:
+    """Add common options to a parser."""
+    parser.add_argument(
+        "--no-sign",
+        action="store_true",
+        help="disable ad-hoc codesigning",
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="enable verbose/debug logging",
+    )
+    parser.add_argument(
+        "--no-color",
+        action="store_true",
+        help="disable colored output",
+    )
+
+
+def _cmd_create(args: argparse.Namespace) -> None:
+    """Handle 'create' subcommand."""
+    setup_logging(args.verbose, not args.no_color)
+    log = logging.getLogger("bundler")
+
+    target = Path(args.executable)
+    if not target.exists():
+        log.error("Target executable does not exist: %s", target)
+        sys.exit(1)
+
+    bundle = Bundle(
+        target=target,
+        version=args.version,
+        add_to_resources=args.resource,
+        base_id=args.id,
+        extension=args.extension,
+        codesign=not args.no_sign,
+    )
+    bundle_path = bundle.create()
+    log.info("Created: %s", bundle_path)
+
+
+def _cmd_fix(args: argparse.Namespace) -> None:
+    """Handle 'fix' subcommand."""
+    setup_logging(args.verbose, not args.no_color)
+    log = logging.getLogger("bundler")
+
+    bundler = DylibBundler(
+        dest_dir=Path(args.dest),
+        overwrite_dir=args.force,
+        create_dir=True,
+        codesign=not args.no_sign,
+        inside_lib_path=args.prefix,
+        files_to_fix=[Path(f) for f in args.files],
+        prefixes_to_ignore=[Path(p) for p in (args.exclude or [])],
+        search_paths=[Path(p) for p in (args.search or [])],
+    )
+
+    log.info("Collecting dependencies")
+    for file in bundler.files_to_fix:
+        bundler.collect_dependencies(file)
+
+    bundler.collect_sub_dependencies()
+    bundler.process_collected_deps()
+
+
 def main() -> None:
     """Command line interface for bundler."""
     try:
         parser = argparse.ArgumentParser(
             prog="bundler",
-            description=(
-                "bundler is a utility for creating macOS app bundles and "
-                "bundling dynamic libraries inside them."
-            ),
+            description="Create macOS app bundles and bundle dynamic libraries.",
             epilog=(
                 "Examples:\n"
-                "  # Bundle dylibs for an existing executable:\n"
-                "  bundler -od -cd -d My.app/Contents/libs/ My.app/Contents/MacOS/main\n"
-                "\n"
-                "  # Create a new .app bundle from an executable:\n"
-                "  bundler --create-bundle /path/to/executable"
+                "  bundler create myapp\n"
+                "  bundler create myapp -v 2.0 -i com.example.myapp\n"
+                "  bundler fix App.app/Contents/MacOS/main -d App.app/Contents/libs/\n"
             ),
             formatter_class=argparse.RawDescriptionHelpFormatter,
         )
 
-        arg = opt = parser.add_argument
-
-        arg("target", nargs="+", help="file to fix (executable or app plug-in)")
-        opt(
-            "-d",
-            "--dest-dir",
-            default="./libs/",
-            help="directory to send bundled libraries (relative to cwd)",
-        )
-        opt(
-            "-p",
-            "--install-path",
-            default="@executable_path/../libs/",
-            help="'inner' path of bundled libraries (usually relative to executable)",
-        )
-        opt(
-            "-s",
-            "--search-path",
-            action="append",
-            help="directory to add to list of locations searched (can be repeated)",
-        )
-        opt(
-            "-od",
-            "--overwrite-dir",
-            help="overwrite output directory if it already exists. implies --create-dir",
-            action="store_true",
-        )
-        opt(
-            "-cd",
-            "--create-dir",
-            help="creates output directory if necessary",
-            action="store_true",
-        )
-        opt(
-            "-ns",
-            "--no-codesign",
-            help="disables ad-hoc codesigning",
-            action="store_true",
-        )
-        opt(
-            "-i",
-            "--ignore",
-            action="append",
-            help="ignore libraries in this directory (can be repeated)",
-        )
-        opt(
-            "-dm", "--debug-mode", help="enable debug mode", action="store_true"
-        )
-        opt(
-            "-nc",
-            "--no-color",
-            help="disable color in logging",
-            action="store_true",
+        subparsers = parser.add_subparsers(
+            title="commands",
+            dest="command",
+            required=True,
         )
 
-        # Bundle creation options
-        opt(
-            "-b",
-            "--create-bundle",
-            help="create a new .app bundle from the target executable",
-            action="store_true",
+        # --- create subcommand ---
+        create_parser = subparsers.add_parser(
+            "create",
+            help="create a new .app bundle from an executable",
+            description="Create a new macOS .app bundle from an executable.",
+            epilog=(
+                "Examples:\n"
+                "  bundler create myapp\n"
+                "  bundler create myapp --version 2.0 --id com.example.myapp\n"
+                "  bundler create myapp -e .plugin\n"
+            ),
+            formatter_class=argparse.RawDescriptionHelpFormatter,
         )
-        opt(
-            "-v",
-            "--version",
+        create_parser.add_argument(
+            "executable",
+            help="path to the executable to bundle",
+        )
+        create_parser.add_argument(
+            "-o", "--output",
+            help="output directory (default: same as executable)",
+        )
+        create_parser.add_argument(
+            "-v", "--version",
             default="1.0",
-            dest="bundle_version",
-            help="bundle version (for --create-bundle)",
+            help="bundle version (default: 1.0)",
         )
-        opt(
-            "--base-id",
+        create_parser.add_argument(
+            "-i", "--id",
             default="org.me",
-            help="bundle identifier prefix (for --create-bundle)",
+            help="bundle identifier prefix (default: org.me)",
         )
-        opt(
-            "-r",
-            "--resource",
-            action="append",
-            help="add resource to bundle (can be repeated, for --create-bundle)",
-        )
-        opt(
-            "-e",
-            "--extension",
+        create_parser.add_argument(
+            "-e", "--extension",
             default=".app",
-            help="bundle extension/suffix (for --create-bundle, default: .app)",
+            help="bundle extension (default: .app)",
         )
+        create_parser.add_argument(
+            "-r", "--resource",
+            action="append",
+            metavar="PATH",
+            help="add resource to bundle (repeatable)",
+        )
+        _add_common_options(create_parser)
+        create_parser.set_defaults(func=_cmd_create)
+
+        # --- fix subcommand ---
+        fix_parser = subparsers.add_parser(
+            "fix",
+            help="fix dylib paths in existing files",
+            description="Bundle dynamic libraries and fix paths in existing files.",
+            epilog=(
+                "Examples:\n"
+                "  bundler fix App.app/Contents/MacOS/main -d App.app/Contents/libs/\n"
+                "  bundler fix main -d ./libs/ -s /opt/local/lib\n"
+                "  bundler fix main plugin.so -d ./libs/ --force\n"
+            ),
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+        )
+        fix_parser.add_argument(
+            "files",
+            nargs="+",
+            help="files to fix (executables or plugins)",
+        )
+        fix_parser.add_argument(
+            "-d", "--dest",
+            required=True,
+            metavar="DIR",
+            help="destination directory for bundled libraries",
+        )
+        fix_parser.add_argument(
+            "-p", "--prefix",
+            default="@executable_path/../libs/",
+            metavar="PATH",
+            help="library install path prefix (default: @executable_path/../libs/)",
+        )
+        fix_parser.add_argument(
+            "-s", "--search",
+            action="append",
+            metavar="DIR",
+            help="additional search path (repeatable)",
+        )
+        fix_parser.add_argument(
+            "-x", "--exclude",
+            action="append",
+            metavar="DIR",
+            help="exclude libraries from directory (repeatable)",
+        )
+        fix_parser.add_argument(
+            "-f", "--force",
+            action="store_true",
+            help="overwrite destination directory if it exists",
+        )
+        _add_common_options(fix_parser)
+        fix_parser.set_defaults(func=_cmd_fix)
 
         args = parser.parse_args()
-
-        # Setup logging
-        setup_logging(args.debug_mode, not args.no_color)
-        log = logging.getLogger("bundler")
-
-        if args.create_bundle:
-            # Create a new .app bundle
-            if len(args.target) != 1:
-                log.error(
-                    "--create-bundle requires exactly one target executable"
-                )
-                sys.exit(1)
-
-            target = Path(args.target[0])
-            if not target.exists():
-                log.error("Target executable does not exist: %s", target)
-                sys.exit(1)
-
-            bundle = Bundle(
-                target=target,
-                version=args.bundle_version,
-                add_to_resources=args.resource,
-                base_id=args.base_id,
-                extension=args.extension,
-                codesign=not args.no_codesign,
-            )
-            bundle.create()
-
-        else:
-            # Bundle dylibs for existing files
-            bundler = DylibBundler(
-                dest_dir=Path(args.dest_dir),
-                overwrite_dir=args.overwrite_dir,
-                create_dir=args.create_dir or args.overwrite_dir,
-                codesign=not args.no_codesign,
-                inside_lib_path=args.install_path,
-                files_to_fix=[Path(f) for f in args.target],
-                prefixes_to_ignore=[Path(p) for p in (args.ignore or [])],
-                search_paths=[Path(p) for p in (args.search_path or [])],
-            )
-
-            log.info("Collecting dependencies")
-
-            # Collect dependencies
-            for file in bundler.files_to_fix:
-                bundler.collect_dependencies(file)
-
-            bundler.collect_sub_dependencies()
-            bundler.process_collected_deps()
+        args.func(args)
 
     except BundlerError as e:
         logging.error(str(e))
