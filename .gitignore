@@ -1,3 +1,5 @@
+.DS_Store
+
 # Byte-compiled / optimized / DLL files
 archive
 .DS_Store
@@ -126,9 +128,16 @@ venv.bak/
 /site
 
 # mypy
-.mypy_cache/
+.*_cache/
 .dmypy.json
 dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# agents
+.claude
+CLAUDE.md
+GEMINI.md
+AGENTS.md
+
