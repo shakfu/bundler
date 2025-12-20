@@ -1,4 +1,4 @@
-.PHONY: all help install dev clean test test-unit test-integration \
+.PHONY: all help install clean test test-unit test-integration \
 		coverage lint format typecheck check build publish publish-test \
 		example run wheel-check
 
@@ -13,7 +13,6 @@ help:
 	@echo ""
 	@echo "Development:"
 	@echo "  install          Install package in development mode"
-	@echo "  dev              Install package with dev dependencies"
 	@echo "  clean            Remove build artifacts and caches"
 	@echo ""
 	@echo "Testing:"
@@ -43,40 +42,35 @@ help:
 # ============================================================================
 
 install:
-	uv sync
-
-dev:
-	uv sync --group dev
+	@uv sync
 
 clean:
-	rm -rf build/
-	rm -rf dist/
-	rm -rf *.egg-info/
-	rm -rf .pytest_cache/
-	rm -rf .mypy_cache/
-	rm -rf .ruff_cache/
-	rm -rf .coverage
-	rm -rf htmlcov/
-	rm -rf demo.app/
-	find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
-	find . -type f -name "*.pyc" -delete 2>/dev/null || true
-	find . -type f -name "*.pyo" -delete 2>/dev/null || true
+	@rm -rf build/
+	@rm -rf dist/
+	@rm -rf *.egg-info/
+	@rm -rf .*_cache/
+	@rm -rf .coverage
+	@rm -rf htmlcov/
+	@rm -rf demo.app/
+	@find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+	@find . -type f -name "*.pyc" -delete 2>/dev/null || true
+	@find . -type f -name "*.pyo" -delete 2>/dev/null || true
 
 # ============================================================================
 # Testing
 # ============================================================================
 
 test:
-	uv run pytest tests/ -v
+	@uv run pytest tests/ -v
 
 test-unit:
-	uv run pytest tests/test_bundler.py tests/test_dylibbundler.py -v
+	@uv run pytest tests/test_bundler.py tests/test_dylibbundler.py -v
 
 test-integration:
-	uv run pytest tests/test_integration.py -v
+	@uv run pytest tests/test_integration.py -v
 
 coverage:
-	uv run pytest tests/ --cov=macbundler --cov-report=term-missing --cov-report=html
+	@uv run pytest tests/ --cov=macbundler --cov-report=term-missing --cov-report=html
 	@echo "Coverage report: htmlcov/index.html"
 
 # ============================================================================
@@ -84,19 +78,16 @@ coverage:
 # ============================================================================
 
 lint:
-	uv run ruff check .
-
-lint-fix:
-	uv run ruff check --fix .
+	@uv run ruff check --fix .
 
 format:
-	uv run ruff format .
+	@uv run ruff format .
 
 format-check:
-	uv run ruff format --check .
+	@uv run ruff format --check .
 
 typecheck:
-	uv run mypy macbundler.py --ignore-missing-imports
+	@uv run mypy macbundler.py --ignore-missing-imports
 
 check: lint typecheck test
 	@echo "All checks passed!"
@@ -106,25 +97,25 @@ check: lint typecheck test
 # ============================================================================
 
 build: clean
-	uv build
-	uv run twine check dist/*
+	@uv build
+	@uv run twine check dist/*
 
 wheel-check:
-	uv run twine check dist/*
+	@uv run twine check dist/*
 
 publish: build
-	uv run twine upload dist/*
+	@uv run twine upload dist/*
 
 publish-test: build
-	uv run twine upload --repository testpypi dist/*
+	@uv run twine upload --repository testpypi dist/*
 
 # ============================================================================
 # Utilities
 # ============================================================================
 
 run:
-	uv run python -m macbundler $(ARGS)
+	@uv run python -m macbundler $(ARGS)
 
 # Example: make bundle-example
 example:
-	 make -C tests/rpath && rm tests/rpath/dependent && rm -rf tests/rpath/libs
+	@make -C tests/rpath && rm tests/rpath/dependent && rm -rf tests/rpath/libs

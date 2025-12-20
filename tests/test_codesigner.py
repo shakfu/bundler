@@ -1,6 +1,5 @@
 """Unit tests for Codesigner class."""
 
-import os
 import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -9,7 +8,6 @@ import pytest
 
 from macbundler import (
     Codesigner,
-    CodesignError,
     ConfigurationError,
 )
 
@@ -206,7 +204,9 @@ class TestCodesignerSigning:
         assert "--sign" in call_args
 
     @patch("subprocess.run")
-    def test_sign_runtime_with_entitlements(self, mock_run, sample_bundle, temp_dir):
+    def test_sign_runtime_with_entitlements(
+        self, mock_run, sample_bundle, temp_dir
+    ):
         """Test signing runtime with entitlements."""
         mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
 

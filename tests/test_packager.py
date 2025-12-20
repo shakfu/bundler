@@ -1,6 +1,5 @@
 """Unit tests for Packager class."""
 
-import os
 import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -9,8 +8,6 @@ import pytest
 
 from macbundler import (
     ConfigurationError,
-    NotarizationError,
-    PackagingError,
     Packager,
 )
 
@@ -126,7 +123,9 @@ class TestPackagerDryRun:
         )
 
         with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+            mock_run.return_value = MagicMock(
+                returncode=0, stdout="", stderr=""
+            )
             packager.process()
 
         # DMG should not exist (dry run)
@@ -200,7 +199,9 @@ class TestPackagerSigning:
         """Test DMG signing command."""
         mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
 
-        packager = Packager(sample_bundle, dev_id="John Doe", sign_contents=False)
+        packager = Packager(
+            sample_bundle, dev_id="John Doe", sign_contents=False
+        )
         packager.output.write_bytes(b"fake dmg")
         packager.sign_dmg()
 
@@ -220,7 +221,9 @@ class TestPackagerNotarization:
         packager = Packager(sample_bundle, dev_id="Test", sign_contents=False)
         packager.output.write_bytes(b"fake dmg")
 
-        with pytest.raises(ConfigurationError, match="Keychain profile required"):
+        with pytest.raises(
+            ConfigurationError, match="Keychain profile required"
+        ):
             packager.notarize_dmg()
 
     @patch("subprocess.run")
@@ -341,7 +344,9 @@ class TestPackagerProcess:
         assert not any("stapler" in c for c in calls)
 
     @patch("subprocess.run")
-    def test_process_warns_without_dev_id(self, mock_run, sample_bundle, caplog):
+    def test_process_warns_without_dev_id(
+        self, mock_run, sample_bundle, caplog
+    ):
         """Test warning when no Developer ID."""
         packager = Packager(
             sample_bundle,
@@ -357,6 +362,7 @@ class TestPackagerProcess:
         mock_run.side_effect = side_effect
 
         import logging
+
         with caplog.at_level(logging.WARNING):
             packager.process(notarize=False)
 

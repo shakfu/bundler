@@ -49,7 +49,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-
 # ----------------------------------------------------------------------------
 # Optional dotenv support (zero production dependencies)
 
@@ -1211,12 +1210,14 @@ class Codesigner:
         # Resolve developer ID from parameter or environment
         if dev_id is None:
             dev_id = os.getenv("DEV_ID")
+        self.authority: str | None
         if dev_id not in [None, "-", ""]:
             self.authority = f"Developer ID Application: {dev_id}"
         else:
             self.authority = None  # ad-hoc signing
 
         # Resolve entitlements path
+        self.entitlements: Path | None
         if entitlements:
             self.entitlements = Path(entitlements)
             if not self.entitlements.exists():
@@ -1377,7 +1378,9 @@ class Codesigner:
         if self.verify_after and not self.dry_run:
             self._section("VERIFYING SIGNATURE")
             if not self.verify_signature(self.path):
-                raise CodesignError(f"Signature verification failed: {self.path}")
+                raise CodesignError(
+                    f"Signature verification failed: {self.path}"
+                )
 
         self.log.info("DONE!")
 
@@ -1476,7 +1479,9 @@ class Packager:
             self.dev_id = None
 
         # Resolve keychain profile from parameter or environment
-        self.keychain_profile = keychain_profile or os.getenv("KEYCHAIN_PROFILE")
+        self.keychain_profile = keychain_profile or os.getenv(
+            "KEYCHAIN_PROFILE"
+        )
 
         # Entitlements path
         self.entitlements = Path(entitlements) if entitlements else None
