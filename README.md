@@ -9,6 +9,8 @@ A Python toolkit for creating self-contained macOS application bundles with prop
 - Handle rpath, @executable_path, and @loader_path resolution
 - Recursive dependency collection
 - Ad-hoc code signing support
+- Recursive bundle signing with Developer ID support
+- Full DMG packaging and signing workflow
 - Both CLI and programmatic APIs
 
 ## Installation
@@ -31,6 +33,12 @@ macbundler create myapp
 
 # Bundle dylibs for an existing app
 macbundler fix My.app/Contents/MacOS/main -d My.app/Contents/libs/
+
+# Sign a bundle with Developer ID
+macbundler sign MyApp.app -i "John Doe"
+
+# Create a signed and notarized DMG
+macbundler package MyApp.app -i "John Doe" -k AC_PROFILE
 ```
 
 ### Python API
@@ -53,7 +61,7 @@ bundle.create()
 
 ## CLI Reference
 
-The CLI has two subcommands: `create` and `fix`.
+The CLI has four subcommands: `create`, `fix`, `sign`, and `package`.
 
 ### `macbundler create`
 
@@ -106,6 +114,60 @@ macbundler fix My.app/Contents/MacOS/main -d My.app/Contents/libs/
 macbundler fix main -d ./libs/ -s /opt/local/lib
 macbundler fix main plugin.so -d ./libs/ --force
 macbundler fix main -d ./libs/ -x /opt/local/lib
+```
+
+### `macbundler sign`
+
+Recursively codesign a macOS bundle with Developer ID.
+
+```
+macbundler sign <bundle> [options]
+
+Options:
+  -i, --dev-id ID         Developer ID name (or set DEV_ID env var)
+  -e, --entitlements FILE Path to entitlements.plist
+  --dry-run               Show what would be signed without signing
+  --no-verify             Skip signature verification
+  --verbose               Enable debug logging
+  --no-color              Disable colored output
+```
+
+**Examples:**
+
+```bash
+macbundler sign MyApp.app
+macbundler sign MyApp.app -i "John Doe" -e entitlements.plist
+macbundler sign MyApp.app --dry-run
+```
+
+### `macbundler package`
+
+Create a DMG, sign it, notarize with Apple, and staple the ticket.
+
+```
+macbundler package <source> [options]
+
+Options:
+  -o, --output FILE           Output DMG path (default: <source>.dmg)
+  -n, --name NAME             Volume name (default: source name)
+  -i, --dev-id ID             Developer ID name (or set DEV_ID env var)
+  -k, --keychain-profile NAME Keychain profile for notarytool (or set KEYCHAIN_PROFILE env var)
+  -e, --entitlements FILE     Path to entitlements.plist
+  --no-sign                   Skip signing bundle contents
+  --no-notarize               Skip notarization
+  --no-staple                 Skip stapling
+  --dry-run                   Show commands without executing
+  --verbose                   Enable debug logging
+  --no-color                  Disable colored output
+```
+
+**Examples:**
+
+```bash
+macbundler package MyApp.app
+macbundler package MyApp.app -o releases/MyApp-1.0.dmg
+macbundler package MyApp.app -i "John Doe" -k AC_PROFILE
+macbundler package dist/ --no-notarize
 ```
 
 ## Python API Reference
@@ -170,6 +232,57 @@ bundle_path = make_bundle(
     base_id="com.example",
 )
 ```
+
+### Codesigner
+
+Recursively codesign a macOS bundle with Developer ID support. Signs internal binaries first, then nested apps, frameworks, and finally the main bundle with runtime hardening.
+
+```python
+from macbundler import Codesigner
+
+signer = Codesigner(
+    path="MyApp.app",              # Path to bundle (.app, .bundle, .framework, .mxo)
+    dev_id="John Doe",             # Developer ID name (None or "-" for ad-hoc)
+    entitlements="entitlements.plist",  # Optional entitlements file
+    dry_run=False,                 # If True, only show what would be signed
+    verify=True,                   # Verify signatures after signing
+)
+
+# Execute the signing workflow
+signer.process()
+
+# Or preview without signing
+signer.process_dry_run()
+```
+
+Environment variable `DEV_ID` can be used as fallback for the developer ID.
+
+### Packager
+
+Full release workflow: sign contents, create DMG, sign DMG, notarize, and staple.
+
+```python
+from macbundler import Packager
+
+packager = Packager(
+    source="MyApp.app",            # Bundle or folder to package
+    output="MyApp-1.0.dmg",        # Output DMG path (default: <source>.dmg)
+    volume_name="MyApp",           # Volume name (default: source name)
+    dev_id="John Doe",             # Developer ID name
+    keychain_profile="AC_PROFILE", # Keychain profile for notarytool
+    entitlements="entitlements.plist",  # Optional entitlements file
+    dry_run=False,                 # Show commands without executing
+    sign_contents=True,            # Sign bundle contents before packaging
+)
+
+# Execute full workflow (sign, create DMG, sign DMG, notarize, staple)
+dmg_path = packager.process()
+
+# Or skip notarization/stapling
+dmg_path = packager.process(notarize=False, staple=False)
+```
+
+Environment variables `DEV_ID` and `KEYCHAIN_PROFILE` can be used as fallbacks.
 
 ## Bundle Structure
 

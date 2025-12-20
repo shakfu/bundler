@@ -49,6 +49,24 @@ import sys
 import tempfile
 from pathlib import Path
 
+
+# ----------------------------------------------------------------------------
+# Optional dotenv support (zero production dependencies)
+
+
+def _load_dotenv() -> None:
+    """Attempt to load .env file if python-dotenv is available."""
+    try:
+        from dotenv import load_dotenv
+
+        load_dotenv()
+    except ImportError:
+        pass
+
+
+_load_dotenv()
+
+
 # ----------------------------------------------------------------------------
 # Constants
 
@@ -96,6 +114,23 @@ INFO_PLIST_TMPL = """\
 </plist>
 """
 
+ENTITLEMENTS_PLIST_TMPL = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.cs.allow-jit</key>
+    <false/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <false/>
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+    <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+    <true/>
+</dict>
+</plist>
+"""
+
 # ----------------------------------------------------------------------------
 # Error handling
 
@@ -124,6 +159,18 @@ class FileError(BundlerError):
 
 class ConfigurationError(BundlerError):
     """Exception raised when configuration is invalid."""
+
+
+class CodesignError(BundlerError):
+    """Exception raised when codesigning fails."""
+
+
+class NotarizationError(BundlerError):
+    """Exception raised when notarization fails."""
+
+
+class PackagingError(BundlerError):
+    """Exception raised when DMG packaging fails."""
 
 
 # ----------------------------------------------------------------------------
@@ -1117,6 +1164,500 @@ class DylibBundler:
 
 
 # ----------------------------------------------------------------------------
+# Codesigning and Packaging
+
+
+class Codesigner:
+    """Recursively codesign a macOS bundle with Developer ID support.
+
+    This class handles the proper ordering of codesigning operations:
+    1. Sign internal binaries (.so, .dylib) first
+    2. Sign nested .app bundles
+    3. Sign frameworks
+    4. Sign the main bundle/runtime with entitlements
+
+    Args:
+        path: Path to the bundle to sign (.app, .bundle, .framework, .mxo)
+        dev_id: Developer ID name (None or "-" for ad-hoc signing)
+        entitlements: Path to entitlements.plist file
+        dry_run: If True, only show what would be signed
+        verify: If True, verify signatures after signing
+
+    Environment Variables:
+        DEV_ID: Developer ID (fallback if dev_id not provided)
+
+    Example:
+        signer = Codesigner("MyApp.app", dev_id="John Doe",
+                            entitlements="entitlements.plist")
+        signer.process()
+    """
+
+    FILE_EXTENSIONS: list[str] = [".so", ".dylib"]
+    FOLDER_EXTENSIONS: list[str] = [".mxo", ".framework", ".app", ".bundle"]
+
+    def __init__(
+        self,
+        path: Pathlike,
+        dev_id: str | None = None,
+        entitlements: Pathlike | None = None,
+        dry_run: bool = False,
+        verify: bool = True,
+    ) -> None:
+        self.path = Path(path)
+        self.dry_run = dry_run
+        self.verify_after = verify
+        self.log = logging.getLogger(self.__class__.__name__)
+
+        # Resolve developer ID from parameter or environment
+        if dev_id is None:
+            dev_id = os.getenv("DEV_ID")
+        if dev_id not in [None, "-", ""]:
+            self.authority = f"Developer ID Application: {dev_id}"
+        else:
+            self.authority = None  # ad-hoc signing
+
+        # Resolve entitlements path
+        if entitlements:
+            self.entitlements = Path(entitlements)
+            if not self.entitlements.exists():
+                raise ConfigurationError(
+                    f"Entitlements file not found: {self.entitlements}"
+                )
+        else:
+            self.entitlements = None
+
+        # Target collections
+        self.targets_internals: set[Path] = set()
+        self.targets_apps: set[Path] = set()
+        self.targets_frameworks: set[Path] = set()
+        self.targets_runtimes: set[Path] = set()
+
+        # Build base codesign command
+        self._cmd_codesign = [
+            "codesign",
+            "--sign",
+            f'"{self.authority}"' if self.authority else "-",
+            "--timestamp",
+            "--force",
+        ]
+
+    def run_command(self, command: str, shell: bool = True) -> str:
+        """Run a shell command and return its output.
+
+        Args:
+            command: The command to run
+            shell: Whether to run in a shell
+
+        Returns:
+            The command output
+
+        Raises:
+            CommandError: If the command fails
+        """
+        self.log.debug("%s", command)
+        if self.dry_run:
+            self.log.info("[DRY RUN] %s", command)
+            return ""
+        try:
+            result = subprocess.run(
+                command, shell=shell, check=True, text=True, capture_output=True
+            )
+            return result.stdout
+        except subprocess.CalledProcessError as e:
+            raise CommandError(command, e.returncode, e.stderr) from e
+
+    def collect(self) -> None:
+        """Walk the bundle and categorize all signable targets."""
+        for root, folders, files in os.walk(self.path):
+            root_path = Path(root)
+
+            # Collect files
+            for fname in files:
+                fpath = root_path / fname
+                if fpath.is_symlink():
+                    continue
+                if fpath.suffix in self.FILE_EXTENSIONS:
+                    self.log.debug("added binary: %s", fpath)
+                    self.targets_internals.add(fpath)
+
+            # Collect folders/bundles
+            for folder in folders:
+                fpath = root_path / folder
+                if fpath.is_symlink():
+                    continue
+                if fpath.suffix in self.FOLDER_EXTENSIONS:
+                    self.log.debug("added bundle: %s", fpath)
+                    if fpath.suffix == ".framework":
+                        self.targets_frameworks.add(fpath)
+                    elif fpath.suffix == ".app":
+                        self.targets_apps.add(fpath)
+                    else:
+                        self.targets_internals.add(fpath)
+
+    def sign_internal_binary(self, path: Path) -> None:
+        """Sign an internal binary without runtime hardening.
+
+        Args:
+            path: Path to the binary to sign
+        """
+        codesign_cmd = " ".join(self._cmd_codesign + [f'"{path}"'])
+        self.log.info("signing internal: %s", path)
+        self.run_command(codesign_cmd)
+
+    def sign_runtime(self, path: Path | None = None) -> None:
+        """Sign with runtime hardening and optional entitlements.
+
+        Args:
+            path: Path to sign (defaults to main bundle path)
+        """
+        if path is None:
+            path = self.path
+
+        cmd_parts = self._cmd_codesign + ["--options", "runtime"]
+        if self.entitlements:
+            cmd_parts.extend(["--entitlements", f'"{self.entitlements}"'])
+        cmd_parts.append(f'"{path}"')
+
+        codesign_cmd = " ".join(cmd_parts)
+        self.log.info("signing runtime: %s", path)
+        self.run_command(codesign_cmd)
+
+    def verify_signature(self, path: Path) -> bool:
+        """Verify codesigning of a path.
+
+        Args:
+            path: Path to verify
+
+        Returns:
+            True if verification succeeds
+        """
+        try:
+            self.run_command(f'codesign --verify --verbose "{path}"')
+            self.log.info("verified: %s", path)
+            return True
+        except CommandError as e:
+            self.log.error("verification failed for %s: %s", path, e)
+            return False
+
+    def _section(self, *args: str) -> None:
+        """Display a section header."""
+        print()
+        print("-" * 79)
+        print(*args)
+
+    def process(self) -> None:
+        """Execute the full signing workflow."""
+        self._section("PROCESSING:", str(self.path))
+
+        self._section("COLLECTING...")
+        if not self.targets_internals:
+            self.collect()
+
+        self._section("SIGNING INTERNAL TARGETS")
+        for path in self.targets_internals:
+            self.sign_internal_binary(path)
+
+        self._section("SIGNING APPS")
+        for path in self.targets_apps:
+            # Sign executables inside .app first
+            macos_path = path / "Contents" / "MacOS"
+            if macos_path.exists():
+                for exe in macos_path.iterdir():
+                    if exe.is_file() and not exe.is_symlink():
+                        self.sign_internal_binary(exe)
+            self.sign_runtime(path)
+
+        self._section("SIGNING FRAMEWORKS")
+        for path in self.targets_frameworks:
+            self.sign_internal_binary(path)
+
+        self._section("SIGNING MAIN RUNTIME")
+        self.sign_runtime()
+
+        if self.verify_after and not self.dry_run:
+            self._section("VERIFYING SIGNATURE")
+            if not self.verify_signature(self.path):
+                raise CodesignError(f"Signature verification failed: {self.path}")
+
+        self.log.info("DONE!")
+
+    def process_dry_run(self) -> None:
+        """Show what would be signed without making changes."""
+
+        def relative(p: Path) -> str:
+            return str(p).replace(str(self.path), "")
+
+        self._section("PROCESSING:", str(self.path))
+
+        self._section("COLLECTING...")
+        if not self.targets_internals:
+            self.collect()
+
+        self._section("SIGNING INTERNAL TARGETS")
+        for path in self.targets_internals:
+            print("  internal:", relative(path))
+
+        self._section("SIGNING APPS")
+        for path in self.targets_apps:
+            print("  app:", relative(path))
+            macos_path = path / "Contents" / "MacOS"
+            if macos_path.exists():
+                for exe in macos_path.iterdir():
+                    if exe.is_file() and not exe.is_symlink():
+                        print("    app.exe:", relative(exe))
+            print("    app.runtime:", relative(path))
+
+        self._section("SIGNING FRAMEWORKS")
+        for path in self.targets_frameworks:
+            print("  framework:", relative(path))
+
+        self._section("SIGNING MAIN RUNTIME")
+        print("  main.runtime:", str(self.path))
+
+        self.log.info("DONE (dry run)!")
+
+
+class Packager:
+    """Creates, signs, notarizes, and staples a DMG for distribution.
+
+    This class orchestrates the full release workflow:
+    1. Sign contents with Developer ID
+    2. Create DMG from source folder/bundle
+    3. Sign the DMG with Developer ID
+    4. Submit to Apple for notarization
+    5. Staple the notarization ticket
+
+    Args:
+        source: Path to the bundle or folder to package
+        output: Path for the output DMG file (default: {source.stem}.dmg)
+        volume_name: Name for the mounted volume (default: source name)
+        dev_id: Developer ID name
+        keychain_profile: Keychain profile for notarytool
+        entitlements: Path to entitlements.plist file
+        dry_run: If True, show commands without executing
+        sign_contents: If True, sign bundle contents before packaging
+
+    Environment Variables:
+        DEV_ID: Developer ID (fallback if dev_id not provided)
+        KEYCHAIN_PROFILE: Keychain profile name (fallback)
+
+    Example:
+        packager = Packager("MyApp.app", output="MyApp-1.0.dmg")
+        packager.process()
+    """
+
+    def __init__(
+        self,
+        source: Pathlike,
+        output: Pathlike | None = None,
+        volume_name: str | None = None,
+        dev_id: str | None = None,
+        keychain_profile: str | None = None,
+        entitlements: Pathlike | None = None,
+        dry_run: bool = False,
+        sign_contents: bool = True,
+    ) -> None:
+        self.source = Path(source)
+        if not self.source.exists():
+            raise ConfigurationError(f"Source does not exist: {self.source}")
+
+        # Output path defaults to source.dmg in same directory
+        if output:
+            self.output = Path(output)
+        else:
+            self.output = self.source.parent / f"{self.source.stem}.dmg"
+
+        # Volume name defaults to source name
+        self.volume_name = volume_name or self.source.stem
+
+        # Resolve developer ID from parameter or environment
+        self.dev_id = dev_id or os.getenv("DEV_ID")
+        if not self.dev_id or self.dev_id == "-":
+            self.dev_id = None
+
+        # Resolve keychain profile from parameter or environment
+        self.keychain_profile = keychain_profile or os.getenv("KEYCHAIN_PROFILE")
+
+        # Entitlements path
+        self.entitlements = Path(entitlements) if entitlements else None
+
+        self.dry_run = dry_run
+        self.should_sign_contents = sign_contents
+        self.log = logging.getLogger(self.__class__.__name__)
+
+    def run_command(self, command: str, shell: bool = True) -> str:
+        """Run a shell command and return its output."""
+        self.log.debug("%s", command)
+        if self.dry_run:
+            self.log.info("[DRY RUN] %s", command)
+            return ""
+        try:
+            result = subprocess.run(
+                command, shell=shell, check=True, text=True, capture_output=True
+            )
+            return result.stdout
+        except subprocess.CalledProcessError as e:
+            raise CommandError(command, e.returncode, e.stderr) from e
+
+    def sign_bundle_contents(self) -> None:
+        """Recursively sign all bundles in source using Codesigner."""
+        if not self.dev_id:
+            self.log.warning(
+                "No Developer ID provided, skipping content signing"
+            )
+            return
+
+        self.log.info("Signing contents of %s", self.source)
+
+        # If source is a bundle, sign it directly
+        if self.source.suffix in Codesigner.FOLDER_EXTENSIONS:
+            signer = Codesigner(
+                path=self.source,
+                dev_id=self.dev_id,
+                entitlements=self.entitlements,
+                dry_run=self.dry_run,
+            )
+            if self.dry_run:
+                signer.process_dry_run()
+            else:
+                signer.process()
+        else:
+            # Source is a folder - sign each bundle inside
+            for item in self.source.iterdir():
+                if item.suffix in Codesigner.FOLDER_EXTENSIONS:
+                    signer = Codesigner(
+                        path=item,
+                        dev_id=self.dev_id,
+                        entitlements=self.entitlements,
+                        dry_run=self.dry_run,
+                    )
+                    if self.dry_run:
+                        signer.process_dry_run()
+                    else:
+                        signer.process()
+
+    def create_dmg(self) -> Path:
+        """Create DMG from source using hdiutil.
+
+        Returns:
+            Path to the created DMG file
+        """
+        self.log.info("Creating DMG: %s", self.output)
+
+        # Remove existing DMG if present
+        if self.output.exists() and not self.dry_run:
+            self.output.unlink()
+
+        command = (
+            f'hdiutil create -volname "{self.volume_name}" '
+            f'-srcfolder "{self.source}" -ov '
+            f'-format UDZO "{self.output}"'
+        )
+        self.run_command(command)
+
+        if not self.dry_run and not self.output.exists():
+            raise PackagingError(f"Failed to create DMG: {self.output}")
+
+        return self.output
+
+    def sign_dmg(self) -> None:
+        """Sign the DMG with Developer ID."""
+        if not self.dev_id:
+            raise ConfigurationError(
+                "Developer ID required for DMG signing. "
+                "Set DEV_ID environment variable or pass dev_id parameter."
+            )
+
+        self.log.info("Signing DMG: %s", self.output)
+        command = (
+            f'codesign --sign "Developer ID Application: {self.dev_id}" '
+            f'--force --verbose --options runtime "{self.output}"'
+        )
+        self.run_command(command)
+
+    def notarize_dmg(self) -> None:
+        """Submit DMG to Apple for notarization and wait.
+
+        Raises:
+            NotarizationError: If notarization fails
+            ConfigurationError: If keychain profile not configured
+        """
+        if not self.keychain_profile:
+            raise ConfigurationError(
+                "Keychain profile required for notarization. "
+                "Set KEYCHAIN_PROFILE environment variable or pass "
+                "keychain_profile parameter."
+            )
+
+        self.log.info("Notarizing DMG: %s", self.output)
+        command = (
+            f'xcrun notarytool submit "{self.output}" '
+            f'--keychain-profile "{self.keychain_profile}" --wait'
+        )
+        try:
+            self.run_command(command)
+        except CommandError as e:
+            raise NotarizationError(
+                f"Notarization failed for {self.output}: {e}"
+            ) from e
+
+    def staple_dmg(self) -> None:
+        """Staple the notarization ticket to the DMG."""
+        self.log.info("Stapling DMG: %s", self.output)
+        command = f'xcrun stapler staple "{self.output}"'
+        try:
+            self.run_command(command)
+        except CommandError as e:
+            raise NotarizationError(
+                f"Stapling failed for {self.output}: {e}"
+            ) from e
+
+    def process(
+        self,
+        notarize: bool = True,
+        staple: bool = True,
+    ) -> Path:
+        """Execute the full packaging workflow.
+
+        Args:
+            notarize: Whether to notarize the DMG (requires keychain_profile)
+            staple: Whether to staple the notarization ticket
+
+        Returns:
+            Path to the created DMG file
+        """
+        self.log.info("Starting packaging workflow for %s", self.source)
+
+        # Step 1: Sign contents if requested
+        if self.should_sign_contents:
+            self.sign_bundle_contents()
+
+        # Step 2: Create DMG
+        self.create_dmg()
+
+        # Step 3: Sign DMG (requires dev_id)
+        if self.dev_id:
+            self.sign_dmg()
+        else:
+            self.log.warning("Skipping DMG signing (no Developer ID)")
+
+        # Step 4: Notarize (requires keychain_profile)
+        if notarize and self.keychain_profile:
+            self.notarize_dmg()
+        elif notarize:
+            self.log.warning("Skipping notarization (no keychain profile)")
+
+        # Step 5: Staple (only if notarized)
+        if staple and notarize and self.keychain_profile:
+            self.staple_dmg()
+        elif staple and notarize:
+            self.log.warning("Skipping stapling (not notarized)")
+
+        self.log.info("Packaging complete: %s", self.output)
+        return self.output
+
+
+# ----------------------------------------------------------------------------
 # Functional API
 
 
@@ -1225,6 +1766,60 @@ def _cmd_fix(args: argparse.Namespace) -> None:
 
     bundler.collect_sub_dependencies()
     bundler.process_collected_deps()
+
+
+def _cmd_sign(args: argparse.Namespace) -> None:
+    """Handle 'sign' subcommand."""
+    setup_logging(args.verbose, not args.no_color)
+    log = logging.getLogger("macbundler")
+
+    bundle = Path(args.bundle)
+    if not bundle.exists():
+        log.error("Bundle does not exist: %s", bundle)
+        sys.exit(1)
+
+    signer = Codesigner(
+        path=bundle,
+        dev_id=args.dev_id,
+        entitlements=args.entitlements,
+        dry_run=args.dry_run,
+        verify=not args.no_verify,
+    )
+
+    if args.dry_run:
+        signer.process_dry_run()
+    else:
+        signer.process()
+
+    log.info("Signed: %s", bundle)
+
+
+def _cmd_package(args: argparse.Namespace) -> None:
+    """Handle 'package' subcommand."""
+    setup_logging(args.verbose, not args.no_color)
+    log = logging.getLogger("macbundler")
+
+    source = Path(args.source)
+    if not source.exists():
+        log.error("Source does not exist: %s", source)
+        sys.exit(1)
+
+    packager = Packager(
+        source=source,
+        output=args.output,
+        volume_name=args.name,
+        dev_id=args.dev_id,
+        keychain_profile=args.keychain_profile,
+        entitlements=args.entitlements,
+        dry_run=args.dry_run,
+        sign_contents=not args.no_sign,
+    )
+
+    dmg_path = packager.process(
+        notarize=not args.no_notarize,
+        staple=not args.no_staple,
+    )
+    log.info("Created: %s", dmg_path)
 
 
 def main() -> None:
@@ -1352,6 +1947,137 @@ def main() -> None:
         )
         _add_common_options(fix_parser)
         fix_parser.set_defaults(func=_cmd_fix)
+
+        # --- sign subcommand ---
+        sign_parser = subparsers.add_parser(
+            "sign",
+            help="codesign a bundle with Developer ID",
+            description="Recursively codesign a macOS bundle with Developer ID.",
+            epilog=(
+                "Examples:\n"
+                "  macbundler sign MyApp.app\n"
+                "  macbundler sign MyApp.app -i 'John Doe' -e entitlements.plist\n"
+                "  macbundler sign MyApp.app --dry-run\n"
+            ),
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+        )
+        sign_parser.add_argument(
+            "bundle",
+            help="path to the bundle to sign (.app, .bundle, .framework, .mxo)",
+        )
+        sign_parser.add_argument(
+            "-i",
+            "--dev-id",
+            metavar="ID",
+            help="Developer ID name (or set DEV_ID env var)",
+        )
+        sign_parser.add_argument(
+            "-e",
+            "--entitlements",
+            metavar="FILE",
+            help="path to entitlements.plist",
+        )
+        sign_parser.add_argument(
+            "--dry-run",
+            action="store_true",
+            help="show what would be signed without signing",
+        )
+        sign_parser.add_argument(
+            "--no-verify",
+            action="store_true",
+            help="skip signature verification",
+        )
+        sign_parser.add_argument(
+            "--verbose",
+            action="store_true",
+            help="enable verbose/debug logging",
+        )
+        sign_parser.add_argument(
+            "--no-color",
+            action="store_true",
+            help="disable colored output",
+        )
+        sign_parser.set_defaults(func=_cmd_sign)
+
+        # --- package subcommand ---
+        package_parser = subparsers.add_parser(
+            "package",
+            help="create, sign, notarize, and staple a DMG",
+            description="Create a DMG, sign it, notarize with Apple, and staple.",
+            epilog=(
+                "Examples:\n"
+                "  macbundler package MyApp.app\n"
+                "  macbundler package MyApp.app -o releases/MyApp-1.0.dmg\n"
+                "  macbundler package MyApp.app -i 'John Doe' -k AC_PROFILE\n"
+                "  macbundler package dist/ --no-notarize\n"
+            ),
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+        )
+        package_parser.add_argument(
+            "source",
+            help="path to bundle or folder to package",
+        )
+        package_parser.add_argument(
+            "-o",
+            "--output",
+            metavar="FILE",
+            help="output DMG path (default: <source>.dmg)",
+        )
+        package_parser.add_argument(
+            "-n",
+            "--name",
+            metavar="NAME",
+            help="volume name (default: source name)",
+        )
+        package_parser.add_argument(
+            "-i",
+            "--dev-id",
+            metavar="ID",
+            help="Developer ID name (or set DEV_ID env var)",
+        )
+        package_parser.add_argument(
+            "-k",
+            "--keychain-profile",
+            metavar="PROFILE",
+            help="keychain profile for notarytool (or set KEYCHAIN_PROFILE env var)",
+        )
+        package_parser.add_argument(
+            "-e",
+            "--entitlements",
+            metavar="FILE",
+            help="path to entitlements.plist",
+        )
+        package_parser.add_argument(
+            "--no-sign",
+            action="store_true",
+            help="skip signing bundle contents",
+        )
+        package_parser.add_argument(
+            "--no-notarize",
+            action="store_true",
+            help="skip notarization",
+        )
+        package_parser.add_argument(
+            "--no-staple",
+            action="store_true",
+            help="skip stapling",
+        )
+        package_parser.add_argument(
+            "--dry-run",
+            action="store_true",
+            help="show commands without executing",
+        )
+        package_parser.add_argument(
+            "--verbose",
+            action="store_true",
+            help="enable verbose/debug logging",
+        )
+        package_parser.add_argument(
+            "--no-color",
+            action="store_true",
+            help="disable colored output",
+        )
+        package_parser.set_defaults(func=_cmd_package)
 
         args = parser.parse_args()
         args.func(args)

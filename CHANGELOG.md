@@ -7,7 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.2.1]
+## [0.1.2]
+
+### Added
+
+- **New Codesigner**
+  - Recursive bundle signing with Developer ID support
+  - Proper signing order: internal binaries -> apps -> frameworks -> main runtime
+  - Entitlements and hardened runtime support
+  - Dry-run mode for testing
+  - Signature verification
+  - Environment variable support (DEV_ID)
+  - New subcmd: `macbundler sign <bundle> [-i DEV_ID] [-e ENTITLEMENTS] [--dry-run]`
+
+- **New Packager**
+  - Full DMG packaging workflow
+  - Signs bundle contents with Codesigner
+  - Creates DMG with hdiutil
+  - Signs DMG with Developer ID
+  - Notarizes with xcrun notarytool
+  - Staples with xcrun stapler
+  - Environment variable support (DEV_ID, KEYCHAIN_PROFILE)
+  - New subcmd: `macbundler package <source> [-o OUTPUT] [-i DEV_ID] [-k KEYCHAIN_PROFILE] [--no-notarize]`
 
 ### Changed
 
@@ -17,7 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - CLI command: `bundler` -> `macbundler`
   - Python imports: `from bundler import ...` -> `from macbundler import ...`
 
-## [0.2.0]
+## [0.1.1]
 
 ### Changed
 
