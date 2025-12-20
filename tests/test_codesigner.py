@@ -236,7 +236,8 @@ class TestCodesignerSigning:
         assert result is True
         mock_run.assert_called_once()
         call_args = mock_run.call_args[0][0]
-        assert "codesign --verify" in call_args
+        assert "codesign" in call_args
+        assert "--verify" in call_args
 
 
 class TestCodesignerProcess:
@@ -276,7 +277,7 @@ class TestCodesignerCmdline:
         signer = Codesigner(bundle)
 
         # Command should use '-' for ad-hoc
-        assert "-" in signer._cmd_codesign
+        assert "-" in signer._cmd_codesign_base
 
     def test_dev_id_command(self, temp_dir):
         """Test Developer ID command construction."""
@@ -285,5 +286,4 @@ class TestCodesignerCmdline:
         signer = Codesigner(bundle, dev_id="John Doe")
 
         # Command should include the authority
-        cmd = " ".join(signer._cmd_codesign)
-        assert "Developer ID Application: John Doe" in cmd
+        assert "Developer ID Application: John Doe" in signer._cmd_codesign_base

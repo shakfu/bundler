@@ -7,11 +7,93 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.3]
+
+### Added
+
+- **Configuration file support**
+  - New `.macbundler.toml` configuration file support
+  - Settings can be configured per-project instead of CLI arguments
+  - Supports all subcommand options: create, sign, package
+
+- **Icon handling**
+  - New `--icon` CLI option for `create` command
+  - New `icon` parameter for `Bundle` class
+  - Icons are copied to Resources folder and referenced in Info.plist
+  - Configurable via `.macbundler.toml`: `icon = "path/to/icon.icns"`
+
+- **Progress indicators**
+  - New `ProgressSpinner` class for terminal progress indication
+  - Automatically shown during notarization (can take several minutes)
+  - Uses ASCII spinner characters for terminal compatibility
+  - Context manager support: `with ProgressSpinner("message"):`
+
+- **Expanded Info.plist template**
+  - Added `LSMinimumSystemVersion` key (default: "10.13")
+  - Added `NSHighResolutionCapable` key (always enabled)
+  - New `--min-system-version` CLI option for `create` command
+  - Configurable via `.macbundler.toml`: `min_system_version = "11.0"`
+
+- **Dry-run for all commands**
+  - Added `--dry-run` to `create` command
+  - Added `--dry-run` to `fix` command
+  - All 4 subcommands now support dry-run: create, fix, sign, package
+
+- **Universal binary detection**
+  - New `get_binary_architectures(path)` function - returns list of architectures
+  - New `is_universal_binary(path)` function - checks if binary is fat/universal
+  - New `get_binary_info(path)` function - returns detailed architecture info
+  - Architecture info is logged when creating bundles
+
+- **Security validation**
+  - New `validate_file()` function for file validation before bundling
+  - New `validate_developer_id()` function for Developer ID format validation
+  - New `is_valid_macho()` function for Mach-O binary detection
+  - New `ValidationError` exception class
+  - Files are validated before copying (existence, size, Mach-O format)
+  - Developer IDs are validated in Codesigner and Packager classes
+  - Constants for Mach-O magic numbers (`MACHO_MAGIC_NUMBERS`)
+
+- **New tests**
+  - 25 new tests for new features in `tests/test_new_features.py`
+  - 35 new tests for security validation in `tests/test_security.py`
+  - Total test count: 205 (up from 145)
+
+### Changed
+
+- `Bundle` class now accepts `icon`, `min_system_version`, and `dry_run` parameters
+- `DylibBundler` class now accepts `dry_run` parameter
+- `make_bundle()` function now accepts `icon`, `min_system_version`, and `dry_run` parameters
+
+### Fixed
+
+- **Security: shell=True removed from all subprocess calls**
+  - All `subprocess.run()` calls now use `shell=False` with list arguments
+  - Eliminates shell injection vulnerabilities
+  - Consolidated command execution into shared `run_command()` utility
+
+- **Error handling: sys.exit() replaced with exceptions**
+  - Library code no longer calls `sys.exit()` directly
+  - All errors now raise appropriate exception types
+  - `sys.exit()` reserved for CLI handlers only
+
+### Improved
+
+- **Code organization**
+  - Refactored `Dependency.__init__` into focused methods: `_resolve_path()`, `_check_should_bundle()`, `_locate_library()`
+  - Consolidated duplicate `run_command()` implementations into shared utility
+  - Extracted magic numbers/strings into named constants
+
+- **Type safety**
+  - Enabled strict mypy with `disallow_untyped_defs = true`
+  - Complete type annotations for all functions and methods
+
+- **Test coverage**
+  - Added comprehensive CLI tests (`tests/test_cli.py`)
+  - Added edge case tests (`tests/test_edge_cases.py`)
+  - Tests for interactive prompts, ARM signing workaround, notarization failures
+
 ## [0.2.2]
-
-- Re-release 0.2.2 to correct wrong version being pushed earlier. This version is same as 0.1.2
-
-## [0.1.2]
 
 ### Added
 
@@ -42,7 +124,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - CLI command: `bundler` -> `macbundler`
   - Python imports: `from bundler import ...` -> `from macbundler import ...`
 
-## [0.1.1]
+## [0.2.1]
 
 ### Changed
 

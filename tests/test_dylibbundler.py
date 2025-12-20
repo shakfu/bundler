@@ -165,12 +165,12 @@ def test_system_library_detection(bundler_instance):
 def test_command_execution(bundler_instance, temp_dir):
     """Test command execution functionality."""
     # Test successful command
-    result = bundler_instance.run_command("echo 'test'", shell=True)
+    result = bundler_instance.run_command(["echo", "test"])
     assert "test" in result
 
     # Test failed command
     with pytest.raises(CommandError):
-        bundler_instance.run_command("false", shell=True)
+        bundler_instance.run_command(["false"])
 
 
 def test_file_permission_changes(bundler_instance, temp_dir):
@@ -238,9 +238,10 @@ def test_dependency_copying(bundler_instance, temp_dir):
 
 
 def test_error_handling_command_error(bundler_instance):
-    """Test CommandError handling."""
+    """Test CommandError handling for failing commands."""
+    # Use 'false' which is a valid command that always fails with exit code 1
     with pytest.raises(CommandError):
-        bundler_instance.run_command("nonexistent_command_xyz123", shell=True)
+        bundler_instance.run_command(["false"])
 
 
 def test_error_handling_configuration_error():

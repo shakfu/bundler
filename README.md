@@ -284,6 +284,35 @@ dmg_path = packager.process(notarize=False, staple=False)
 
 Environment variables `DEV_ID` and `KEYCHAIN_PROFILE` can be used as fallbacks.
 
+## Configuration File
+
+macbundler supports configuration files to set default values for CLI options. Configuration is loaded from the first file found:
+
+1. `.macbundler.toml` in current directory
+2. `macbundler.toml` in current directory
+
+**Example `.macbundler.toml`:**
+
+```toml
+[create]
+version = "2.0"
+id = "com.example"
+extension = ".app"
+
+[sign]
+dev_id = "John Doe"
+entitlements = "entitlements.plist"
+
+[package]
+dev_id = "John Doe"
+keychain_profile = "AC_PROFILE"
+entitlements = "entitlements.plist"
+```
+
+Since config files may contain sensitive credentials (`dev_id`, `keychain_profile`), add `.macbundler.toml` to your `.gitignore`.
+
+CLI arguments always override config file values.
+
 ## Bundle Structure
 
 The created `.app` bundle follows the standard macOS structure:

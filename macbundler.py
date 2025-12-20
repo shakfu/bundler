@@ -39,6 +39,7 @@ Usage (API):
 
 import argparse
 import datetime
+import itertools
 import logging
 import os
 import re
@@ -47,34 +48,43 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 from pathlib import Path
-
-# ----------------------------------------------------------------------------
-# Optional dotenv support (zero production dependencies)
-
-
-def _load_dotenv() -> None:
-    """Attempt to load .env file if python-dotenv is available."""
-    try:
-        from dotenv import load_dotenv
-
-        load_dotenv()
-    except ImportError:
-        pass
-
-
-_load_dotenv()
-
 
 # ----------------------------------------------------------------------------
 # Constants
 
-__version__ = "0.2.2"
+__version__ = "0.2.3"
 
 # Type aliases
 Pathlike = Path | str
 
-CAVEAT = "MAY NOT CORRECTLY HANDLE THIS DEPENDENCY: Manually check the executable with 'otool -L'"
+# Warning message for uncertain dependency handling
+CAVEAT = (
+    "MAY NOT CORRECTLY HANDLE THIS DEPENDENCY: "
+    "Manually check the executable with 'otool -L'"
+)
+
+# Bundle package type identifier (APPL = Application, ???? = creator code)
+PKG_INFO_CONTENT = "APPL????"
+
+# Default install path prefix for bundled libraries
+DEFAULT_LIB_PATH = "@executable_path/../libs/"
+
+# Default bundle identifier prefix
+DEFAULT_BUNDLE_ID = "org.me"
+
+# Default bundle extension
+DEFAULT_BUNDLE_EXT = ".app"
+
+# Environment variable names
+ENV_DEV_ID = "DEV_ID"
+ENV_KEYCHAIN_PROFILE = "KEYCHAIN_PROFILE"
+
+# File extensions for code signing
+SIGNABLE_FILE_EXTENSIONS = [".so", ".dylib"]
+SIGNABLE_FOLDER_EXTENSIONS = [".mxo", ".framework", ".app", ".bundle"]
 
 INFO_PLIST_TMPL = """\
 <?xml version="1.0" encoding="UTF-8"?>
@@ -88,7 +98,7 @@ INFO_PLIST_TMPL = """\
     <key>CFBundleGetInfoString</key>
     <string>{versioned_bundle_name}</string>
     <key>CFBundleIconFile</key>
-    <string>app.icns</string>
+    <string>{icon_file}</string>
     <key>CFBundleIdentifier</key>
     <string>{bundle_identifier}</string>
     <key>CFBundleInfoDictionaryVersion</key>
@@ -98,13 +108,17 @@ INFO_PLIST_TMPL = """\
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>{versioned_bundle_name}</string>
+    <string>{bundle_version}</string>
     <key>CFBundleSignature</key>
     <string>????</string>
     <key>CFBundleVersion</key>
     <string>{bundle_version}</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>{min_system_version}</string>
     <key>NSAppleScriptEnabled</key>
     <string>YES</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
     <key>NSMainNibFile</key>
     <string>MainMenu</string>
     <key>NSPrincipalClass</key>
@@ -112,6 +126,9 @@ INFO_PLIST_TMPL = """\
 </dict>
 </plist>
 """
+
+# Default minimum macOS version
+DEFAULT_MIN_SYSTEM_VERSION = "10.13"
 
 ENTITLEMENTS_PLIST_TMPL = """\
 <?xml version="1.0" encoding="UTF-8"?>
@@ -129,6 +146,127 @@ ENTITLEMENTS_PLIST_TMPL = """\
 </dict>
 </plist>
 """
+
+# ----------------------------------------------------------------------------
+# Optional dotenv support (zero production dependencies)
+
+
+def _load_dotenv() -> None:
+    """Attempt to load .env file if python-dotenv is available."""
+    try:
+        from dotenv import load_dotenv
+
+        load_dotenv()
+    except ImportError:
+        pass
+
+
+_load_dotenv()
+
+# ----------------------------------------------------------------------------
+# Configuration file support
+
+
+def load_config(config_path: Path | None = None) -> dict[str, object]:
+    """Load configuration from a TOML file.
+
+    Searches for configuration in the following order:
+    1. Explicit config_path if provided
+    2. .macbundler.toml in current directory
+    3. macbundler.toml in current directory
+
+    Note: pyproject.toml is intentionally NOT searched because config
+    may contain sensitive credentials (DEV_ID, KEYCHAIN_PROFILE) that
+    should not be committed to version control.
+
+    Args:
+        config_path: Optional explicit path to config file
+
+    Returns:
+        Configuration dictionary (empty if no config found)
+
+    Example .macbundler.toml:
+        [create]
+        version = "2.0"
+        id = "com.example"
+        extension = ".app"
+
+        [sign]
+        dev_id = "John Doe"
+        entitlements = "entitlements.plist"
+
+        [package]
+        dev_id = "John Doe"
+        keychain_profile = "AC_PROFILE"
+    """
+    # Try to import tomllib (Python 3.11+) or tomli as fallback
+    try:
+        import tomllib
+    except ImportError:
+        try:
+            import tomli as tomllib  # type: ignore[import-not-found]
+        except ImportError:
+            return {}
+
+    # Determine config file path
+    if config_path and config_path.exists():
+        paths_to_try = [config_path]
+    else:
+        cwd = Path.cwd()
+        paths_to_try = [
+            cwd / ".macbundler.toml",
+            cwd / "macbundler.toml",
+        ]
+
+    for path in paths_to_try:
+        if path.exists():
+            try:
+                with open(path, "rb") as f:
+                    data: dict[str, object] = tomllib.load(f)
+                return data
+            except Exception:
+                continue
+
+    return {}
+
+
+def get_config_value(
+    config: dict[str, object],
+    section: str,
+    key: str,
+    default: str | None = None,
+) -> str | None:
+    """Get a value from config with section.key lookup.
+
+    Args:
+        config: Configuration dictionary
+        section: Section name (e.g., "create", "sign")
+        key: Key name within section
+        default: Default value if not found
+
+    Returns:
+        Configuration value or default
+    """
+    section_config = config.get(section, {})
+    if not isinstance(section_config, dict):
+        return default
+    value = section_config.get(key, default)
+    if value is None or isinstance(value, str):
+        return value
+    return default
+
+
+# Global config (loaded lazily)
+_config: dict[str, object] | None = None
+
+
+def get_config() -> dict[str, object]:
+    """Get the global configuration, loading it if necessary."""
+    global _config
+    if _config is None:
+        _config = load_config()
+    return _config
+
 
 # ----------------------------------------------------------------------------
 # Error handling
@@ -170,6 +308,217 @@ class NotarizationError(BundlerError):
 
 class PackagingError(BundlerError):
     """Exception raised when DMG packaging fails."""
+
+
+class ValidationError(BundlerError):
+    """Exception raised when validation fails."""
+
+
+# ----------------------------------------------------------------------------
+# File and certificate validation
+
+# Maximum file size for validation (1GB) - prevents copying unreasonably large files
+MAX_FILE_SIZE = 1024 * 1024 * 1024
+
+# Mach-O magic numbers for binary validation
+MACHO_MAGIC_NUMBERS = {
+    b"\xfe\xed\xfa\xce",  # MH_MAGIC (32-bit)
+    b"\xce\xfa\xed\xfe",  # MH_CIGAM (32-bit, reverse byte order)
+    b"\xfe\xed\xfa\xcf",  # MH_MAGIC_64 (64-bit)
+    b"\xcf\xfa\xed\xfe",  # MH_CIGAM_64 (64-bit, reverse byte order)
+    b"\xca\xfe\xba\xbe",  # FAT_MAGIC (universal binary)
+    b"\xbe\xba\xfe\xca",  # FAT_CIGAM (universal binary, reverse byte order)
+}
+
+# Developer ID format: "Name" or "Name (TEAM_ID)" where TEAM_ID is 10 alphanumeric chars
+# The full signing identity is "Developer ID Application: Name (TEAM_ID)"
+DEVELOPER_ID_PATTERN = re.compile(
+    r"^[A-Za-z][A-Za-z0-9\s\.\-\,\']+(?:\s+\([A-Z0-9]{10}\))?$"
+)
+
+
+def validate_file(
+    path: Pathlike,
+    check_executable: bool = False,
+    check_macho: bool = False,
+    max_size: int = MAX_FILE_SIZE,
+) -> None:
+    """Validate a file before copying to bundle.
+
+    Performs security checks to ensure the file is safe to bundle:
+    - Exists and is a regular file (not symlink, device, socket, etc.)
+    - Is readable
+    - Has non-zero size
+    - Is not larger than max_size
+    - Optionally: is executable
+    - Optionally: is a valid Mach-O binary
+
+    Args:
+        path: Path to the file to validate
+        check_executable: If True, verify the file is executable
+        check_macho: If True, verify the file is a valid Mach-O binary
+        max_size: Maximum allowed file size in bytes
+
+    Raises:
+        ValidationError: If any validation check fails
+    """
+    path = Path(path)
+
+    # Check existence
+    if not path.exists():
+        raise ValidationError(f"File does not exist: {path}")
+
+    # Check it's a regular file (not symlink target, just the path itself)
+    if path.is_symlink():
+        raise ValidationError(f"File is a symbolic link: {path}")
+
+    if not path.is_file():
+        raise ValidationError(f"Path is not a regular file: {path}")
+
+    # Check readability
+    if not os.access(path, os.R_OK):
+        raise ValidationError(f"File is not readable: {path}")
+
+    # Check file size
+    try:
+        size = path.stat().st_size
+    except OSError as e:
+        raise ValidationError(f"Cannot stat file {path}: {e}") from e
+
+    if size == 0:
+        raise ValidationError(f"File is empty (zero bytes): {path}")
+
+    if size > max_size:
+        raise ValidationError(
+            f"File exceeds maximum size ({size} > {max_size} bytes): {path}"
+        )
+
+    # Check executable permission if requested
+    if check_executable and not os.access(path, os.X_OK):
+        raise ValidationError(f"File is not executable: {path}")
+
+    # Check Mach-O magic number if requested
+    if check_macho:
+        try:
+            with open(path, "rb") as f:
+                magic = f.read(4)
+        except OSError as e:
+            raise ValidationError(f"Cannot read file {path}: {e}") from e
+
+        if magic not in MACHO_MAGIC_NUMBERS:
+            raise ValidationError(f"File is not a valid Mach-O binary: {path}")
+
+
+def validate_developer_id(dev_id: str) -> None:
+    """Validate Developer ID string format.
+
+    Developer ID should be in one of these formats:
+    - "John Doe" (name only)
+    - "John Doe (ABCD123456)" (name with 10-character Team ID)
+
+    The full signing identity "Developer ID Application: ..." is constructed
+    by the Codesigner class.
+
+    Args:
+        dev_id: The Developer ID name to validate
+
+    Raises:
+        ValidationError: If the Developer ID format is invalid
+    """
+    if not dev_id or not dev_id.strip():
+        raise ValidationError("Developer ID cannot be empty")
+
+    dev_id = dev_id.strip()
+
+    # Check minimum length
+    if len(dev_id) < 2:
+        raise ValidationError(f"Developer ID is too short: '{dev_id}'")
+
+    # Check maximum length (reasonable limit)
+    if len(dev_id) > 100:
+        raise ValidationError(
+            f"Developer ID is too long (max 100 characters): '{dev_id}'"
+        )
+
+    # Check format with regex
+    if not DEVELOPER_ID_PATTERN.match(dev_id):
+        raise ValidationError(
+            f"Developer ID has invalid format: '{dev_id}'. "
+            "Expected format: 'Name' or 'Name (TEAM_ID)' where TEAM_ID is 10 alphanumeric characters"
+        )
+
+
+def is_valid_macho(path: Pathlike) -> bool:
+    """Check if a file is a valid Mach-O binary.
+
+    Args:
+        path: Path to the file to check
+
+    Returns:
+        True if the file is a valid Mach-O binary, False otherwise
+    """
+    path = Path(path)
+    if not path.exists() or not path.is_file():
+        return False
+
+    try:
+        with open(path, "rb") as f:
+            magic = f.read(4)
+        return magic in MACHO_MAGIC_NUMBERS
+    except OSError:
+        return False
+
+
+# ----------------------------------------------------------------------------
+# Progress indicator
+
+
+class ProgressSpinner:
+    """A simple terminal spinner for long-running operations.
+
+    Uses ASCII characters for compatibility. No external dependencies.
+
+    Example:
+        with ProgressSpinner("Processing"):
+            time.sleep(5)
+    """
+
+    SPINNER_CHARS = ["|", "/", "-", "\\"]
+
+    def __init__(self, message: str = ""):
+        self.message = message
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def _spin(self) -> None:
+        """Spinner thread function."""
+        spinner = itertools.cycle(self.SPINNER_CHARS)
+        while not self._stop_event.is_set():
+            sys.stdout.write(f"\r{self.message} {next(spinner)} ")
+            sys.stdout.flush()
+            time.sleep(0.1)
+        # Clear the spinner line
+        sys.stdout.write(f"\r{self.message} done\n")
+        sys.stdout.flush()
+
+    def start(self) -> None:
+        """Start the spinner."""
+        self._stop_event.clear()
+        self._thread = threading.Thread(target=self._spin, daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        """Stop the spinner."""
+        self._stop_event.set()
+        if self._thread:
+            self._thread.join(timeout=1.0)
+
+    def __enter__(self) -> "ProgressSpinner":
+        self.start()
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        self.stop()
 
 
 # ----------------------------------------------------------------------------
@@ -242,6 +591,124 @@ def setup_logging(debug: bool = True, use_color: bool = True) -> None:
 
 
 # ----------------------------------------------------------------------------
+# Command execution utilities
+
+
+def run_command(
+    command: list[str],
+    dry_run: bool = False,
+    log: logging.Logger | None = None,
+) -> str:
+    """Run a command and return its output.
+
+    This is the consolidated command execution utility used throughout
+    the module. It provides consistent error handling and optional
+    dry-run support. Uses shell=False for security.
+
+    Args:
+        command: The command as a list of arguments
+        dry_run: If True, log command but don't execute (default: False)
+        log: Optional logger for debug/dry-run output
+
+    Returns:
+        The command stdout output
+
+    Raises:
+        CommandError: If the command fails
+    """
+    cmd_str = " ".join(command)
+    if log:
+        log.debug("%s", cmd_str)
+    if dry_run:
+        if log:
+            log.info("[DRY RUN] %s", cmd_str)
+        return ""
+    try:
+        result = subprocess.run(
+            command, shell=False, check=True, text=True, capture_output=True
+        )
+        return result.stdout
+    except subprocess.CalledProcessError as e:
+        raise CommandError(cmd_str, e.returncode, e.stderr or e.output) from e
+
+
+# ----------------------------------------------------------------------------
+# Universal binary detection
+
+
+def get_binary_architectures(binary_path: Pathlike) -> list[str]:
+    """Get the architectures of a Mach-O binary using lipo.
+
+    Args:
+        binary_path: Path to the binary file
+
+    Returns:
+        List of architecture strings (e.g., ["x86_64", "arm64"])
+        Empty list if not a valid Mach-O binary
+    """
+    path = Path(binary_path)
+    if not path.exists():
+        return []
+
+    try:
+        result = subprocess.run(
+            ["lipo", "-info", str(path)],
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+        # Output format: "Architectures in the fat file: /path are: x86_64 arm64"
+        # or: "Non-fat file: /path is architecture: x86_64"
+        output = result.stdout.strip()
+        if "are:" in output:
+            # Fat/universal binary
+            archs_str = output.split("are:")[-1].strip()
+            return archs_str.split()
+        elif "is architecture:" in output:
+            # Single architecture
+            arch = output.split("is architecture:")[-1].strip()
+            return [arch]
+        return []
+    except subprocess.CalledProcessError:
+        return []
+
+
+def is_universal_binary(binary_path: Pathlike) -> bool:
+    """Check if a binary is a universal (fat) binary.
+
+    Args:
+        binary_path: Path to the binary file
+
+    Returns:
+        True if the binary contains multiple architectures
+    """
+    archs = get_binary_architectures(binary_path)
+    return len(archs) > 1
+
+
+def get_binary_info(binary_path: Pathlike) -> dict[str, object]:
+    """Get detailed information about a Mach-O binary.
+
+    Args:
+        binary_path: Path to the binary file
+
+    Returns:
+        Dictionary with binary information:
+        - architectures: List of architecture strings
+        - is_universal: True if fat binary
+        - is_arm: True if contains arm64
+        - is_intel: True if contains x86_64
+    """
+    archs = get_binary_architectures(binary_path)
+    return {
+        "architectures": archs,
+        "is_universal": len(archs) > 1,
+        "is_arm": "arm64" in archs,
+        "is_intel": "x86_64" in archs,
+    }
+
+
+# ----------------------------------------------------------------------------
 # Bundle folder and structure classes
 
 
@@ -283,9 +750,12 @@ class Bundle:
         target: Path to the target executable
         version: Bundle version string (default: "1.0")
         add_to_resources: List of paths to add to Resources folder
-        base_id: Bundle identifier prefix (default: "org.me")
-        extension: Bundle extension (default: ".app")
+        base_id: Bundle identifier prefix (default: DEFAULT_BUNDLE_ID)
+        extension: Bundle extension (default: DEFAULT_BUNDLE_EXT)
         codesign: Whether to apply ad-hoc code signing (default: True)
+        icon: Path to icon file (.icns) to include in bundle
+        min_system_version: Minimum macOS version (default: "10.13")
+        dry_run: If True, only show what would be done without doing it
 
     Example:
         bundle = Bundle("/path/to/myapp")
@@ -297,9 +767,12 @@ class Bundle:
         target: Pathlike,
         version: str = "1.0",
         add_to_resources: list[str] | None = None,
-        base_id: str = "org.me",
-        extension: str = ".app",
+        base_id: str = DEFAULT_BUNDLE_ID,
+        extension: str = DEFAULT_BUNDLE_EXT,
         codesign: bool = True,
+        icon: Pathlike | None = None,
+        min_system_version: str = DEFAULT_MIN_SYSTEM_VERSION,
+        dry_run: bool = False,
     ):
         self.target = Path(target)
         self.version = version
@@ -307,6 +780,9 @@ class Bundle:
         self.base_id = base_id
         self.extension = extension
         self.codesign = codesign
+        self.icon = Path(icon) if icon else None
+        self.min_system_version = min_system_version
+        self.dry_run = dry_run
         self.log = logging.getLogger(self.__class__.__name__)
 
         # Bundle structure paths
@@ -324,8 +800,28 @@ class Bundle:
         self.pkg_info = self.contents / "PkgInfo"
         self.executable = self.macos / self.target.name
 
+        # Icon file name in bundle
+        self._icon_filename = self.icon.name if self.icon else "app.icns"
+
     def create_executable(self) -> None:
         """Copy target to bundle and set executable permissions."""
+        # Validate target executable before copying
+        validate_file(self.target, check_executable=True, check_macho=True)
+
+        # Log architecture information for the target executable
+        archs = get_binary_architectures(self.target)
+        if archs:
+            arch_info = ", ".join(archs)
+            if len(archs) > 1:
+                self.log.info("Target is universal binary: %s", arch_info)
+            else:
+                self.log.info("Target architecture: %s", arch_info)
+
+        if self.dry_run:
+            self.log.info(
+                "[DRY RUN] Would copy %s to %s", self.target, self.executable
+            )
+            return
         shutil.copy(self.target, self.executable)
         oldmode = os.stat(self.executable).st_mode
         os.chmod(
@@ -335,31 +831,79 @@ class Bundle:
 
     def create_info_plist(self) -> None:
         """Create the Info.plist file."""
+        content = INFO_PLIST_TMPL.format(
+            executable=self.target.name,
+            bundle_name=self.target.stem,
+            bundle_identifier=f"{self.base_id}.{self.target.stem}",
+            bundle_version=self.version,
+            versioned_bundle_name=f"{self.target.stem} {self.version}",
+            icon_file=self._icon_filename,
+            min_system_version=self.min_system_version,
+        )
+        if self.dry_run:
+            self.log.info("[DRY RUN] Would create %s", self.info_plist)
+            return
         with open(self.info_plist, "w", encoding="utf-8") as fopen:
-            fopen.write(
-                INFO_PLIST_TMPL.format(
-                    executable=self.target.name,
-                    bundle_name=self.target.stem,
-                    bundle_identifier=f"{self.base_id}.{self.target.stem}",
-                    bundle_version=self.version,
-                    versioned_bundle_name=f"{self.target.stem} {self.version}",
-                )
-            )
+            fopen.write(content)
 
     def create_pkg_info(self) -> None:
         """Create the PkgInfo file."""
+        if self.dry_run:
+            self.log.info("[DRY RUN] Would create %s", self.pkg_info)
+            return
         with open(self.pkg_info, "w", encoding="utf-8") as fopen:
-            fopen.write("APPL????")
+            fopen.write(PKG_INFO_CONTENT)
 
     def create_resources(self) -> None:
         """Create and populate the Resources folder."""
+        # Validate icon file if specified
+        if self.icon:
+            validate_file(self.icon)
+
+        # Validate resource files/directories
         if self.add_to_resources:
+            for resource in self.add_to_resources:
+                resource_path = Path(resource)
+                if not resource_path.exists():
+                    raise ValidationError(
+                        f"Resource does not exist: {resource}"
+                    )
+
+        if self.dry_run:
+            if self.add_to_resources:
+                for resource in self.add_to_resources:
+                    self.log.info(
+                        "[DRY RUN] Would copy %s to Resources", resource
+                    )
+            if self.icon:
+                self.log.info(
+                    "[DRY RUN] Would copy icon %s to Resources", self.icon
+                )
+            return
+
+        # Create Resources folder if we have resources or an icon
+        if self.add_to_resources or self.icon:
             self.resources.create()
+
+        if self.add_to_resources:
             for resource in self.add_to_resources:
                 self.resources.copy(resource)
 
+        # Copy icon to Resources folder
+        if self.icon:
+            dest_icon = self.resources.path / self.icon.name
+            shutil.copy2(self.icon, dest_icon)
+            self.log.info("Added icon: %s", self.icon.name)
+
     def bundle_dependencies(self) -> None:
         """Bundle dynamic libraries using DylibBundler."""
+        if self.dry_run:
+            self.log.info(
+                "[DRY RUN] Would bundle dynamic libraries for %s",
+                self.executable,
+            )
+            return
+
         self.log.info("Bundling dynamic libraries for %s", self.executable)
 
         bundler = DylibBundler(
@@ -367,7 +911,7 @@ class Bundle:
             overwrite_dir=True,
             create_dir=True,
             codesign=self.codesign,
-            inside_lib_path="@executable_path/../libs/",
+            inside_lib_path=DEFAULT_LIB_PATH,
             files_to_fix=[self.executable],
         )
 
@@ -381,16 +925,24 @@ class Bundle:
         Returns:
             Path to the created bundle
         """
-        self.log.info("Creating bundle at %s", self.bundle)
+        if self.dry_run:
+            self.log.info("[DRY RUN] Would create bundle at %s", self.bundle)
+        else:
+            self.log.info("Creating bundle at %s", self.bundle)
+            self.macos.mkdir(exist_ok=True, parents=True)
 
-        self.macos.mkdir(exist_ok=True, parents=True)
         self.create_executable()
         self.create_info_plist()
         self.create_pkg_info()
         self.create_resources()
         self.bundle_dependencies()
 
-        self.log.info("Bundle created successfully: %s", self.bundle)
+        if self.dry_run:
+            self.log.info(
+                "[DRY RUN] Bundle would be created at: %s", self.bundle
+            )
+        else:
+            self.log.info("Bundle created successfully: %s", self.bundle)
         return self.bundle
 
 
@@ -420,64 +972,85 @@ class Dependency:
         self.new_name = ""
         self.log = logging.getLogger(self.__class__.__name__)
 
-        # Resolve the original file path
         path = Path(str(path).strip())
         dependent_file = Path(dependent_file)
 
         try:
-            if self._is_rpath(path):
-                original_file = self.search_filename_in_rpaths(
-                    path, dependent_file
-                )
-            else:
-                try:
-                    original_file = path.resolve()
-                except OSError as e:
-                    raise FileError(f"Cannot resolve path '{path}': {e}") from e
-
-            # Check if given path is a symlink
-            if original_file != path:
-                self.add_symlink(path)
-
-            self.filename = original_file.name
-            self.prefix = original_file.parent
-
-            # Check if this dependency should be bundled
-            if not self.parent.is_bundled_prefix(self.prefix):
+            self._resolve_path(path, dependent_file)
+            if not self._check_should_bundle():
                 return
-
-            # Check if the lib is in a known location
-            if not self.prefix or not (self.prefix / self.filename).exists():
-                if not self.parent.search_paths:
-                    self._init_search_paths()
-
-                # Check if file is contained in one of the paths
-                for search_path in self.parent.search_paths:
-                    if (search_path / self.filename).exists():
-                        self.log.info(
-                            "FOUND %s in %s", self.filename, search_path
-                        )
-                        self.prefix = search_path
-                        break
-
-            # If location still unknown, ask user for search path
-            if not self.parent.is_ignored_prefix(self.prefix) and (
-                not self.prefix or not (self.prefix / self.filename).exists()
-            ):
-                self.log.warning(
-                    "Library %s has an incomplete name (location unknown)",
-                    self.filename,
-                )
-                self.parent.add_search_path(
-                    self._get_user_input_dir_for_file(self.filename)
-                )
-
+            self._locate_library()
             self.new_name = self.filename
-
+        except FileError:
+            raise
         except Exception as e:
             raise FileError(
                 f"Failed to initialize dependency for {path}: {e}"
             ) from e
+
+    def _resolve_path(self, path: Path, dependent_file: Path) -> None:
+        """Resolve the dependency path and set filename/prefix.
+
+        Args:
+            path: The path to resolve (may be rpath-relative)
+            dependent_file: The file that depends on this dependency
+
+        Raises:
+            FileError: If the path cannot be resolved
+        """
+        if self._is_rpath(path):
+            original_file = self.search_filename_in_rpaths(path, dependent_file)
+        else:
+            try:
+                original_file = path.resolve()
+            except OSError as e:
+                raise FileError(f"Cannot resolve path '{path}': {e}") from e
+
+        # Track if original path was a symlink
+        if original_file != path:
+            self.add_symlink(path)
+
+        self.filename = original_file.name
+        self.prefix = original_file.parent
+
+    def _check_should_bundle(self) -> bool:
+        """Check if this dependency should be bundled.
+
+        Returns:
+            True if the dependency should be bundled, False otherwise
+        """
+        return self.parent.is_bundled_prefix(self.prefix)
+
+    def _locate_library(self) -> None:
+        """Locate the library file, searching paths or prompting user if needed.
+
+        Raises:
+            ConfigurationError: If user aborts when prompted for location
+        """
+        # Check if the lib is in a known location
+        if self.prefix and (self.prefix / self.filename).exists():
+            return
+
+        # Initialize search paths from environment if needed
+        if not self.parent.search_paths:
+            self._init_search_paths()
+
+        # Search in configured paths
+        for search_path in self.parent.search_paths:
+            if (search_path / self.filename).exists():
+                self.log.info("FOUND %s in %s", self.filename, search_path)
+                self.prefix = search_path
+                return
+
+        # If location still unknown, ask user for search path
+        if not self.parent.is_ignored_prefix(self.prefix):
+            self.log.warning(
+                "Library %s has an incomplete name (location unknown)",
+                self.filename,
+            )
+            self.parent.add_search_path(
+                self._get_user_input_dir_for_file(self.filename)
+            )
 
     def _get_user_input_dir_for_file(self, filename: str) -> Path:
         """Prompt user for the directory containing a file.
@@ -560,7 +1133,13 @@ class Dependency:
         Raises:
             CommandError: If install_name_tool fails
         """
-        command = f'install_name_tool -change "{old_name}" "{new_name}" "{binary_file}"'
+        command = [
+            "install_name_tool",
+            "-change",
+            str(old_name),
+            str(new_name),
+            str(binary_file),
+        ]
         try:
             self.parent.run_command(command)
         except CommandError as e:
@@ -692,17 +1271,31 @@ class Dependency:
         return self.symlinks[index]
 
     def copy_yourself(self) -> None:
-        """Copy the dependency to the destination directory."""
+        """Copy the dependency to the destination directory.
+
+        Raises:
+            CommandError: If install_name_tool fails to change identity
+            ValidationError: If the library file fails validation
+        """
+        # Validate library file before copying
+        validate_file(self.get_original_path(), check_macho=True)
+
         shutil.copy2(self.get_original_path(), self.get_install_path())
 
         # Fix the lib's inner name
-        command = f'install_name_tool -id "{self.get_inner_path()}" "{self.get_install_path()}"'
-        if subprocess.call(command, shell=True) != 0:
-            self.log.error(
-                "An error occurred while trying to change identity of library %s",
-                self.get_install_path(),
+        command = [
+            "install_name_tool",
+            "-id",
+            self.get_inner_path(),
+            str(self.get_install_path()),
+        ]
+        result = subprocess.run(command, capture_output=True)
+        if result.returncode != 0:
+            raise CommandError(
+                f"Failed to change identity of library {self.get_install_path()}",
+                result.returncode,
+                result.stderr.decode() if result.stderr else None,
             )
-            sys.exit(1)
 
     def fix_file_that_depends_on_me(self, file_to_fix: Path) -> None:
         """Fix dependencies in a file that depends on this library."""
@@ -772,10 +1365,11 @@ class DylibBundler:
         overwrite_dir: bool = False,
         create_dir: bool = False,
         codesign: bool = True,
-        inside_lib_path: str = "@executable_path/../libs/",
+        inside_lib_path: str = DEFAULT_LIB_PATH,
         files_to_fix: list[Pathlike] | None = None,
         prefixes_to_ignore: list[Pathlike] | None = None,
         search_paths: list[Pathlike] | None = None,
+        dry_run: bool = False,
     ):
         try:
             self.dest_dir = Path(dest_dir)
@@ -788,6 +1382,7 @@ class DylibBundler:
                 Path(p) for p in (prefixes_to_ignore or [])
             ]
             self.search_paths = [Path(p) for p in (search_paths or [])]
+            self.dry_run = dry_run
 
             self.deps: list[Dependency] = []
             self.deps_per_file: dict[Path, list[Dependency]] = {}
@@ -847,12 +1442,11 @@ class DylibBundler:
             return False
         return not self.is_ignored_prefix(prefix)
 
-    def run_command(self, command: str, shell: bool = True) -> str:
-        """Run a shell command and return its output.
+    def run_command(self, command: list[str]) -> str:
+        """Run a command and return its output.
 
         Args:
-            command: The command to run
-            shell: Whether to run in a shell
+            command: The command as a list of arguments
 
         Returns:
             The command output
@@ -860,14 +1454,7 @@ class DylibBundler:
         Raises:
             CommandError: If the command fails
         """
-        self.log.debug("%s", command)
-        try:
-            result = subprocess.run(
-                command, shell=shell, check=True, text=True, capture_output=True
-            )
-            return result.stdout
-        except subprocess.CalledProcessError as e:
-            raise CommandError(command, e.returncode, e.output) from e
+        return run_command(command, dry_run=self.dry_run, log=self.log)
 
     def chmod(self, path: Pathlike, perm: int = 0o777) -> None:
         """Change file permissions."""
@@ -898,19 +1485,33 @@ class DylibBundler:
         self.deps_collected[filename] = True
 
     def _collect_dependency_lines(self, filename: Path) -> list[str]:
-        """Execute otool -l and collect dependency lines."""
-        if not filename.exists():
-            self.log.error(
-                "Cannot find file %s to read its dependencies", filename
-            )
-            sys.exit(1)
+        """Execute otool -l and collect dependency lines.
 
-        cmd = f'otool -l "{filename}"'
+        Args:
+            filename: Path to the Mach-O binary to analyze
+
+        Returns:
+            List of dependency lines from otool output
+
+        Raises:
+            FileError: If the file does not exist
+            CommandError: If otool fails or output is malformed
+        """
+        if not filename.exists():
+            raise FileError(
+                f"Cannot find file {filename} to read its dependencies"
+            )
+
+        command = ["otool", "-l", str(filename)]
         try:
-            output = subprocess.check_output(cmd, shell=True, text=True)
-        except subprocess.CalledProcessError:
-            self.log.error("Error running otool on %s", filename)
-            sys.exit(1)
+            result = subprocess.run(
+                command, check=True, text=True, capture_output=True
+            )
+            output = result.stdout
+        except subprocess.CalledProcessError as e:
+            raise CommandError(
+                f"Error running otool on {filename}", e.returncode
+            ) from e
 
         lines = []
         raw_lines = output.split("\n")
@@ -919,8 +1520,11 @@ class DylibBundler:
         for line in raw_lines:
             if "cmd LC_LOAD_DYLIB" in line or "cmd LC_REEXPORT_DYLIB" in line:
                 if searching:
-                    self.log.error("Failed to find name before next cmd")
-                    sys.exit(1)
+                    raise CommandError(
+                        f"Malformed otool output: failed to find name before "
+                        f"next cmd in {filename}",
+                        1,
+                    )
                 searching = True
             elif searching:
                 found = line.find("name ")
@@ -938,9 +1542,12 @@ class DylibBundler:
             )
             return
 
-        cmd = f'otool -l "{filename}"'
+        command = ["otool", "-l", str(filename)]
         try:
-            output = subprocess.check_output(cmd, shell=True, text=True)
+            result = subprocess.run(
+                command, check=True, text=True, capture_output=True
+            )
+            output = result.stdout
         except subprocess.CalledProcessError:
             return
 
@@ -1022,6 +1629,21 @@ class DylibBundler:
         for dep in self.deps:
             dep.print()
 
+        if self.dry_run:
+            self.log.info(
+                "[DRY RUN] Would create destination directory: %s",
+                self.dest_dir,
+            )
+            for dep in reversed(self.deps):
+                self.log.info(
+                    "[DRY RUN] Would copy %s to %s",
+                    dep.get_original_path(),
+                    dep.get_install_path(),
+                )
+            for file in reversed(self.files_to_fix):
+                self.log.info("[DRY RUN] Would fix library paths in %s", file)
+            return
+
         self.create_dest_dir()
 
         for dep in reversed(self.deps):
@@ -1087,15 +1709,30 @@ class DylibBundler:
     def fix_rpaths_on_file(
         self, original_file: Path, file_to_fix: Path
     ) -> None:
-        """Fix rpaths in a file."""
+        """Fix rpaths in a file.
+
+        Args:
+            original_file: The original file to get rpaths from
+            file_to_fix: The file to modify
+
+        Raises:
+            CommandError: If install_name_tool fails to fix rpaths
+        """
         rpaths_to_fix = self.rpaths_per_file.get(original_file, [])
 
         for rpath in rpaths_to_fix:
-            command = f'install_name_tool -rpath "{rpath}" "{self.inside_lib_path}" "{file_to_fix}"'
-            if subprocess.call(command, shell=True) != 0:
-                self.log.error(
-                    "An error occurred while trying to fix dependencies of %s",
-                    file_to_fix,
+            command = [
+                "install_name_tool",
+                "-rpath",
+                str(rpath),
+                self.inside_lib_path,
+                str(file_to_fix),
+            ]
+            result = subprocess.run(command, capture_output=True)
+            if result.returncode != 0:
+                raise CommandError(
+                    f"Failed to fix rpath '{rpath}' in {file_to_fix}",
+                    result.returncode,
                 )
 
     def adhoc_codesign(self, file: Path) -> None:
@@ -1111,10 +1748,15 @@ class DylibBundler:
             return
 
         self.log.info("codesign %s", file)
-        sign_command = (
-            f"codesign --force --deep --preserve-metadata=entitlements,"
-            f'requirements,flags,runtime --sign - "{file}"'
-        )
+        sign_command = [
+            "codesign",
+            "--force",
+            "--deep",
+            "--preserve-metadata=entitlements,requirements,flags,runtime",
+            "--sign",
+            "-",
+            str(file),
+        ]
 
         try:
             self.run_command(sign_command)
@@ -1125,8 +1767,8 @@ class DylibBundler:
             )
 
             try:
-                machine = self.run_command("machine")
-                is_arm = "arm" in machine
+                machine_output = self.run_command(["machine"])
+                is_arm = "arm" in machine_output
             except CommandError:
                 is_arm = False
 
@@ -1191,8 +1833,8 @@ class Codesigner:
         signer.process()
     """
 
-    FILE_EXTENSIONS: list[str] = [".so", ".dylib"]
-    FOLDER_EXTENSIONS: list[str] = [".mxo", ".framework", ".app", ".bundle"]
+    FILE_EXTENSIONS: list[str] = SIGNABLE_FILE_EXTENSIONS
+    FOLDER_EXTENSIONS: list[str] = SIGNABLE_FOLDER_EXTENSIONS
 
     def __init__(
         self,
@@ -1209,9 +1851,11 @@ class Codesigner:
 
         # Resolve developer ID from parameter or environment
         if dev_id is None:
-            dev_id = os.getenv("DEV_ID")
+            dev_id = os.getenv(ENV_DEV_ID)
         self.authority: str | None
-        if dev_id not in [None, "-", ""]:
+        if dev_id is not None and dev_id not in ("-", ""):
+            # Validate Developer ID format
+            validate_developer_id(dev_id)
             self.authority = f"Developer ID Application: {dev_id}"
         else:
             self.authority = None  # ad-hoc signing
@@ -1233,21 +1877,20 @@ class Codesigner:
         self.targets_frameworks: set[Path] = set()
         self.targets_runtimes: set[Path] = set()
 
-        # Build base codesign command
-        self._cmd_codesign = [
+        # Build base codesign command parts
+        self._cmd_codesign_base = [
             "codesign",
             "--sign",
-            f'"{self.authority}"' if self.authority else "-",
+            self.authority if self.authority else "-",
             "--timestamp",
             "--force",
         ]
 
-    def run_command(self, command: str, shell: bool = True) -> str:
-        """Run a shell command and return its output.
+    def run_command(self, command: list[str]) -> str:
+        """Run a command and return its output.
 
         Args:
-            command: The command to run
-            shell: Whether to run in a shell
+            command: The command as a list of arguments
 
         Returns:
             The command output
@@ -1255,17 +1898,7 @@ class Codesigner:
         Raises:
             CommandError: If the command fails
         """
-        self.log.debug("%s", command)
-        if self.dry_run:
-            self.log.info("[DRY RUN] %s", command)
-            return ""
-        try:
-            result = subprocess.run(
-                command, shell=shell, check=True, text=True, capture_output=True
-            )
-            return result.stdout
-        except subprocess.CalledProcessError as e:
-            raise CommandError(command, e.returncode, e.stderr) from e
+        return run_command(command, dry_run=self.dry_run, log=self.log)
 
     def collect(self) -> None:
         """Walk the bundle and categorize all signable targets."""
@@ -1301,7 +1934,7 @@ class Codesigner:
         Args:
             path: Path to the binary to sign
         """
-        codesign_cmd = " ".join(self._cmd_codesign + [f'"{path}"'])
+        codesign_cmd = self._cmd_codesign_base + [str(path)]
         self.log.info("signing internal: %s", path)
         self.run_command(codesign_cmd)
 
@@ -1314,14 +1947,13 @@ class Codesigner:
         if path is None:
             path = self.path
 
-        cmd_parts = self._cmd_codesign + ["--options", "runtime"]
+        cmd_parts = self._cmd_codesign_base + ["--options", "runtime"]
         if self.entitlements:
-            cmd_parts.extend(["--entitlements", f'"{self.entitlements}"'])
-        cmd_parts.append(f'"{path}"')
+            cmd_parts.extend(["--entitlements", str(self.entitlements)])
+        cmd_parts.append(str(path))
 
-        codesign_cmd = " ".join(cmd_parts)
         self.log.info("signing runtime: %s", path)
-        self.run_command(codesign_cmd)
+        self.run_command(cmd_parts)
 
     def verify_signature(self, path: Path) -> bool:
         """Verify codesigning of a path.
@@ -1333,7 +1965,7 @@ class Codesigner:
             True if verification succeeds
         """
         try:
-            self.run_command(f'codesign --verify --verbose "{path}"')
+            self.run_command(["codesign", "--verify", "--verbose", str(path)])
             self.log.info("verified: %s", path)
             return True
         except CommandError as e:
@@ -1474,13 +2106,16 @@ class Packager:
         self.volume_name = volume_name or self.source.stem
 
         # Resolve developer ID from parameter or environment
-        self.dev_id = dev_id or os.getenv("DEV_ID")
+        self.dev_id = dev_id or os.getenv(ENV_DEV_ID)
         if not self.dev_id or self.dev_id == "-":
             self.dev_id = None
+        elif self.dev_id:
+            # Validate Developer ID format
+            validate_developer_id(self.dev_id)
 
         # Resolve keychain profile from parameter or environment
         self.keychain_profile = keychain_profile or os.getenv(
-            "KEYCHAIN_PROFILE"
+            ENV_KEYCHAIN_PROFILE
         )
 
         # Entitlements path
@@ -1490,19 +2125,9 @@ class Packager:
         self.should_sign_contents = sign_contents
         self.log = logging.getLogger(self.__class__.__name__)
 
-    def run_command(self, command: str, shell: bool = True) -> str:
-        """Run a shell command and return its output."""
-        self.log.debug("%s", command)
-        if self.dry_run:
-            self.log.info("[DRY RUN] %s", command)
-            return ""
-        try:
-            result = subprocess.run(
-                command, shell=shell, check=True, text=True, capture_output=True
-            )
-            return result.stdout
-        except subprocess.CalledProcessError as e:
-            raise CommandError(command, e.returncode, e.stderr) from e
+    def run_command(self, command: list[str]) -> str:
+        """Run a command and return its output."""
+        return run_command(command, dry_run=self.dry_run, log=self.log)
 
     def sign_bundle_contents(self) -> None:
         """Recursively sign all bundles in source using Codesigner."""
@@ -1553,11 +2178,18 @@ class Packager:
         if self.output.exists() and not self.dry_run:
             self.output.unlink()
 
-        command = (
-            f'hdiutil create -volname "{self.volume_name}" '
-            f'-srcfolder "{self.source}" -ov '
-            f'-format UDZO "{self.output}"'
-        )
+        command = [
+            "hdiutil",
+            "create",
+            "-volname",
+            self.volume_name,
+            "-srcfolder",
+            str(self.source),
+            "-ov",
+            "-format",
+            "UDZO",
+            str(self.output),
+        ]
         self.run_command(command)
 
         if not self.dry_run and not self.output.exists():
@@ -1574,10 +2206,16 @@ class Packager:
             )
 
         self.log.info("Signing DMG: %s", self.output)
-        command = (
-            f'codesign --sign "Developer ID Application: {self.dev_id}" '
-            f'--force --verbose --options runtime "{self.output}"'
-        )
+        command = [
+            "codesign",
+            "--sign",
+            f"Developer ID Application: {self.dev_id}",
+            "--force",
+            "--verbose",
+            "--options",
+            "runtime",
+            str(self.output),
+        ]
         self.run_command(command)
 
     def notarize_dmg(self) -> None:
@@ -1595,12 +2233,22 @@ class Packager:
             )
 
         self.log.info("Notarizing DMG: %s", self.output)
-        command = (
-            f'xcrun notarytool submit "{self.output}" '
-            f'--keychain-profile "{self.keychain_profile}" --wait'
-        )
+        command = [
+            "xcrun",
+            "notarytool",
+            "submit",
+            str(self.output),
+            "--keychain-profile",
+            self.keychain_profile,
+            "--wait",
+        ]
         try:
-            self.run_command(command)
+            if self.dry_run:
+                self.run_command(command)
+            else:
+                # Show progress spinner during notarization (can take minutes)
+                with ProgressSpinner("Waiting for notarization"):
+                    self.run_command(command)
         except CommandError as e:
             raise NotarizationError(
                 f"Notarization failed for {self.output}: {e}"
@@ -1609,7 +2257,7 @@ class Packager:
     def staple_dmg(self) -> None:
         """Staple the notarization ticket to the DMG."""
         self.log.info("Stapling DMG: %s", self.output)
-        command = f'xcrun stapler staple "{self.output}"'
+        command = ["xcrun", "stapler", "staple", str(self.output)]
         try:
             self.run_command(command)
         except CommandError as e:
@@ -1673,6 +2321,9 @@ def make_bundle(
     base_id: str = "org.me",
     extension: str = ".app",
     codesign: bool = True,
+    icon: Pathlike | None = None,
+    min_system_version: str = DEFAULT_MIN_SYSTEM_VERSION,
+    dry_run: bool = False,
 ) -> Path:
     """Create a macOS application bundle from an executable.
 
@@ -1683,9 +2334,12 @@ def make_bundle(
         target: Path to the target executable
         version: Bundle version string (default: "1.0")
         add_to_resources: List of paths to add to Resources folder
-        base_id: Bundle identifier prefix (default: "org.me")
-        extension: Bundle extension (default: ".app")
+        base_id: Bundle identifier prefix (default: DEFAULT_BUNDLE_ID)
+        extension: Bundle extension (default: DEFAULT_BUNDLE_EXT)
         codesign: Whether to apply ad-hoc code signing (default: True)
+        icon: Path to icon file (.icns) to include in bundle
+        min_system_version: Minimum macOS version (default: "10.13")
+        dry_run: If True, only show what would be done
 
     Returns:
         Path to the created bundle
@@ -1700,6 +2354,9 @@ def make_bundle(
         base_id=base_id,
         extension=extension,
         codesign=codesign,
+        icon=icon,
+        min_system_version=min_system_version,
+        dry_run=dry_run,
     )
     return bundle.create()
 
@@ -1732,6 +2389,36 @@ def _cmd_create(args: argparse.Namespace) -> None:
     setup_logging(args.verbose, not args.no_color)
     log = logging.getLogger("macbundler")
 
+    # Load config and apply defaults
+    config = get_config()
+    version = args.version
+    if version == "1.0":  # Check if using default
+        version = (
+            get_config_value(config, "create", "version", version) or version
+        )
+    base_id = args.id
+    if base_id == DEFAULT_BUNDLE_ID:  # Check if using default
+        base_id = get_config_value(config, "create", "id", base_id) or base_id
+    extension = args.extension
+    if extension == DEFAULT_BUNDLE_EXT:  # Check if using default
+        extension = (
+            get_config_value(config, "create", "extension", extension)
+            or extension
+        )
+    icon = args.icon
+    if icon is None:
+        icon = get_config_value(config, "create", "icon")
+    min_system_version = args.min_system_version
+    if (
+        min_system_version == DEFAULT_MIN_SYSTEM_VERSION
+    ):  # Check if using default
+        min_system_version = (
+            get_config_value(
+                config, "create", "min_system_version", min_system_version
+            )
+            or min_system_version
+        )
+
     target = Path(args.executable)
     if not target.exists():
         log.error("Target executable does not exist: %s", target)
@@ -1739,11 +2426,14 @@ def _cmd_create(args: argparse.Namespace) -> None:
 
     bundle = Bundle(
         target=target,
-        version=args.version,
+        version=version,
         add_to_resources=args.resource,
-        base_id=args.id,
-        extension=args.extension,
+        base_id=base_id,
+        extension=extension,
         codesign=not args.no_sign,
+        icon=icon,
+        min_system_version=min_system_version,
+        dry_run=args.dry_run,
     )
     bundle_path = bundle.create()
     log.info("Created: %s", bundle_path)
@@ -1763,6 +2453,7 @@ def _cmd_fix(args: argparse.Namespace) -> None:
         files_to_fix=[Path(f) for f in args.files],
         prefixes_to_ignore=[Path(p) for p in (args.exclude or [])],
         search_paths=[Path(p) for p in (args.search or [])],
+        dry_run=args.dry_run,
     )
 
     log.info("Collecting dependencies")
@@ -1778,6 +2469,15 @@ def _cmd_sign(args: argparse.Namespace) -> None:
     setup_logging(args.verbose, not args.no_color)
     log = logging.getLogger("macbundler")
 
+    # Load config and apply defaults
+    config = get_config()
+    dev_id = args.dev_id
+    if dev_id is None:
+        dev_id = get_config_value(config, "sign", "dev_id")
+    entitlements = args.entitlements
+    if entitlements is None:
+        entitlements = get_config_value(config, "sign", "entitlements")
+
     bundle = Path(args.bundle)
     if not bundle.exists():
         log.error("Bundle does not exist: %s", bundle)
@@ -1785,8 +2485,8 @@ def _cmd_sign(args: argparse.Namespace) -> None:
 
     signer = Codesigner(
         path=bundle,
-        dev_id=args.dev_id,
-        entitlements=args.entitlements,
+        dev_id=dev_id,
+        entitlements=entitlements,
         dry_run=args.dry_run,
         verify=not args.no_verify,
     )
@@ -1804,6 +2504,20 @@ def _cmd_package(args: argparse.Namespace) -> None:
     setup_logging(args.verbose, not args.no_color)
     log = logging.getLogger("macbundler")
 
+    # Load config and apply defaults
+    config = get_config()
+    dev_id = args.dev_id
+    if dev_id is None:
+        dev_id = get_config_value(config, "package", "dev_id")
+    keychain_profile = args.keychain_profile
+    if keychain_profile is None:
+        keychain_profile = get_config_value(
+            config, "package", "keychain_profile"
+        )
+    entitlements = args.entitlements
+    if entitlements is None:
+        entitlements = get_config_value(config, "package", "entitlements")
+
     source = Path(args.source)
     if not source.exists():
         log.error("Source does not exist: %s", source)
@@ -1813,9 +2527,9 @@ def _cmd_package(args: argparse.Namespace) -> None:
         source=source,
         output=args.output,
         volume_name=args.name,
-        dev_id=args.dev_id,
-        keychain_profile=args.keychain_profile,
-        entitlements=args.entitlements,
+        dev_id=dev_id,
+        keychain_profile=keychain_profile,
+        entitlements=entitlements,
         dry_run=args.dry_run,
         sign_contents=not args.no_sign,
     )
@@ -1879,14 +2593,14 @@ def main() -> None:
         create_parser.add_argument(
             "-i",
             "--id",
-            default="org.me",
-            help="bundle identifier prefix (default: org.me)",
+            default=DEFAULT_BUNDLE_ID,
+            help=f"bundle identifier prefix (default: {DEFAULT_BUNDLE_ID})",
         )
         create_parser.add_argument(
             "-e",
             "--extension",
-            default=".app",
-            help="bundle extension (default: .app)",
+            default=DEFAULT_BUNDLE_EXT,
+            help=f"bundle extension (default: {DEFAULT_BUNDLE_EXT})",
         )
         create_parser.add_argument(
             "-r",
@@ -1894,6 +2608,22 @@ def main() -> None:
             action="append",
             metavar="PATH",
             help="add resource to bundle (repeatable)",
+        )
+        create_parser.add_argument(
+            "--icon",
+            metavar="FILE",
+            help="path to icon file (.icns)",
+        )
+        create_parser.add_argument(
+            "--min-system-version",
+            default=DEFAULT_MIN_SYSTEM_VERSION,
+            metavar="VERSION",
+            help=f"minimum macOS version (default: {DEFAULT_MIN_SYSTEM_VERSION})",
+        )
+        create_parser.add_argument(
+            "--dry-run",
+            action="store_true",
+            help="show what would be done without doing it",
         )
         _add_common_options(create_parser)
         create_parser.set_defaults(func=_cmd_create)
@@ -1926,9 +2656,9 @@ def main() -> None:
         fix_parser.add_argument(
             "-p",
             "--prefix",
-            default="@executable_path/../libs/",
+            default=DEFAULT_LIB_PATH,
             metavar="PATH",
-            help="library install path prefix (default: @executable_path/../libs/)",
+            help=f"library install path prefix (default: {DEFAULT_LIB_PATH})",
         )
         fix_parser.add_argument(
             "-s",
@@ -1949,6 +2679,11 @@ def main() -> None:
             "--force",
             action="store_true",
             help="overwrite destination directory if it exists",
+        )
+        fix_parser.add_argument(
+            "--dry-run",
+            action="store_true",
+            help="show what would be done without doing it",
         )
         _add_common_options(fix_parser)
         fix_parser.set_defaults(func=_cmd_fix)

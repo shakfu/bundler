@@ -25,9 +25,14 @@ def temp_dir():
 
 @pytest.fixture
 def sample_executable(temp_dir):
-    """Create a sample executable file."""
+    """Create a sample executable file with Mach-O magic number."""
     exe_path = temp_dir / "test_app"
-    exe_path.write_bytes(b"#!/bin/bash\necho 'hello'")
+    # Write Mach-O 64-bit magic number followed by minimal content
+    # This makes the file pass Mach-O validation without being a real binary
+    macho_magic = (
+        b"\xcf\xfa\xed\xfe"  # MH_CIGAM_64 (64-bit, reverse byte order)
+    )
+    exe_path.write_bytes(macho_magic + b"\x00" * 100)
     exe_path.chmod(0o755)
     return exe_path
 
@@ -243,6 +248,8 @@ class TestInfoPlistTemplate:
             bundle_identifier="com.example.myapp",
             bundle_version="1.2.3",
             versioned_bundle_name="MyApp 1.2.3",
+            icon_file="myapp.icns",
+            min_system_version="10.13",
         )
 
         assert "myapp" in result
@@ -250,5 +257,8 @@ class TestInfoPlistTemplate:
         assert "com.example.myapp" in result
         assert "1.2.3" in result
         assert "MyApp 1.2.3" in result
+        assert "myapp.icns" in result
+        assert "10.13" in result
         assert '<?xml version="1.0"' in result
         assert "<plist version=" in result
+        assert "NSHighResolutionCapable" in result

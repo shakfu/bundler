@@ -158,10 +158,12 @@ class TestPackagerDmgCreation:
 
         mock_run.assert_called()
         call_args = mock_run.call_args[0][0]
-        assert "hdiutil create" in call_args
+        assert "hdiutil" in call_args
+        assert "create" in call_args
         assert "-volname" in call_args
         assert "-srcfolder" in call_args
-        assert "-format UDZO" in call_args
+        assert "-format" in call_args
+        assert "UDZO" in call_args
 
     @patch("subprocess.run")
     def test_create_dmg_removes_existing(self, mock_run, sample_bundle):
@@ -209,7 +211,8 @@ class TestPackagerSigning:
         call_args = mock_run.call_args[0][0]
         assert "codesign" in call_args
         assert "Developer ID Application: John Doe" in call_args
-        assert "--options runtime" in call_args
+        assert "--options" in call_args
+        assert "runtime" in call_args
 
 
 class TestPackagerNotarization:
@@ -242,7 +245,9 @@ class TestPackagerNotarization:
 
         mock_run.assert_called()
         call_args = mock_run.call_args[0][0]
-        assert "xcrun notarytool submit" in call_args
+        assert "xcrun" in call_args
+        assert "notarytool" in call_args
+        assert "submit" in call_args
         assert "--keychain-profile" in call_args
         assert "AC_PROFILE" in call_args
         assert "--wait" in call_args
@@ -262,7 +267,9 @@ class TestPackagerStaple:
 
         mock_run.assert_called()
         call_args = mock_run.call_args[0][0]
-        assert "xcrun stapler staple" in call_args
+        assert "xcrun" in call_args
+        assert "stapler" in call_args
+        assert "staple" in call_args
 
 
 class TestPackagerProcess:
