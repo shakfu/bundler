@@ -1,6 +1,6 @@
 [project]
 name = "macbundler"
-version = "0.1.2"
+version = "0.2.2"
 description = "Python tools to create macOS bundles and bundle dynamic libraries."
 readme = "README.md"
 license = "GPL-3.0-or-later"

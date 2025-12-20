@@ -69,7 +69,7 @@ _load_dotenv()
 # ----------------------------------------------------------------------------
 # Constants
 
-__version__ = "0.1.2"
+__version__ = "0.2.2"
 
 # Type aliases
 Pathlike = Path | str
